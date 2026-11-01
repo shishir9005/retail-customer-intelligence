@@ -177,6 +177,8 @@ data/processed/ cleaned Parquet + JSON results (committed, about 10 MB)
     their negative quantities are kept. Only cancellation lines with a product stock code and a positive unit price are kept
     there; cancellation lines whose stock code does not match the product-code pattern (mostly manual adjustments, postage,
     discounts, samples, bank charges and fees) are dropped.
+  - Refund lines that exactly match a sale line removed by the price or quantity rules (same product, customer, country, price
+    and quantity) were dropped from the returns dataset; partial refunds and credits were kept.
   - From the remaining sales lines, these were removed: stock codes that do not match the product-code pattern (five digits plus
     up to three letters, or a DCGS code; the rest are mostly postage, fees, manual adjustments, test lines and gift vouchers);
     quantities of zero or less on invoices that are not cancellations (these lines have a zero price and no customer ID); unit

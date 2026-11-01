@@ -2,7 +2,7 @@
   "steps": [
     {
       "rule": "Exact duplicate rows",
-      "why": "The two sheets overlap in early Dec 2010, so some rows appear twice.",
+      "why": "Most duplicates come from the two sheets overlapping on 1-9 Dec 2010; the rest are lines repeated inside one invoice.",
       "removed": 34335,
       "remaining": 1033036
     },
@@ -32,7 +32,7 @@
     },
     {
       "rule": "Price > 20x the product's median price",
-      "why": "e.g. a 'car flag' normally \u00a31.7 listed at \u00a31,157. Cheap furniture at \u00a3125+ is not removed because its median is also high.",
+      "why": "Likely box-vs-unit or typing errors, e.g. a car flag with a median of \u00a30.42 sold at \u00a31,157. Expensive furniture is kept because its own median is also high. Only 0.2% of revenue is affected.",
       "removed": 93,
       "remaining": 1003245
     },
@@ -46,7 +46,22 @@
   "summary": {
     "raw_rows": 1067371,
     "sales_rows": 1003243,
-    "returns_rows": 17914,
+    "returns_rows": 17911,
+    "refunds_of_removed_sales": {
+      "lines": 3,
+      "refund_pence": 24567872,
+      "refund": 245678.72,
+      "invoices": [
+        "C508859",
+        "C541433",
+        "C581484"
+      ]
+    },
+    "partial_refunds_of_removed_sales": {
+      "lines": 0,
+      "refund_pence": 0,
+      "refund": 0.0
+    },
     "guest_line_share": 0.2259372853835013,
     "guest_revenue_share": 0.13281467982933928,
     "customers": 5852,
@@ -104,6 +119,11 @@
     },
     {
       "check": "No sale line above the extreme-quantity limit",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "No return line above the extreme-quantity limit",
       "offending_rows": 0,
       "passed": true
     }

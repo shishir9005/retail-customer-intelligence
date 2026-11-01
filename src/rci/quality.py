@@ -39,6 +39,8 @@ CHECKS: list[tuple[str, str]] = [
         OR invoice_date >= TIMESTAMP '2011-12-10'"""),
     ("No sale line above the extreme-quantity limit",
      f"SELECT COUNT(*) FROM sales WHERE quantity > {config.MAX_LINE_QUANTITY}"),
+    ("No return line above the extreme-quantity limit",
+     f"SELECT COUNT(*) FROM returns WHERE quantity < -{config.MAX_LINE_QUANTITY}"),
 ]
 
 

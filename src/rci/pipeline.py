@@ -12,6 +12,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from rci import config
@@ -68,6 +69,85 @@ def read_raw(xlsx: Path) -> pd.DataFrame:
     return pd.concat(sheets.values(), ignore_index=True)
 
 
+GUEST = "<guest>"  # stands in for a missing customer ID when matching; it can never equal a real ID
+
+
+def _refund_match_frame(lines: pd.DataFrame, quantity_sign: int) -> pd.DataFrame:
+    """The fields a sale and its refund must agree on, with the price as integer pence.
+
+    Cleaned prices are whole pence, so rounding `unit_price * 100` removes float noise (about 1e-11)
+    and lets prices be compared exactly. `quantity_sign=-1` flips a refund's negative quantity so it
+    can be compared directly with the sale it reverses.
+    """
+    return pd.DataFrame({
+        "stock_code": lines["stock_code"].astype(str),
+        "customer": lines["customer_id"].astype("Int64").astype("string").fillna(GUEST),
+        "country": lines["country"].astype(str),
+        "pence": np.rint(lines["unit_price"].astype("float64") * 100).astype("int64"),
+        "quantity": lines["quantity"].astype("int64") * quantity_sign,
+        "date": lines["invoice_date"],
+    }, index=lines.index)
+
+
+def refunds_of_removed_sales(returns: pd.DataFrame, removed: pd.DataFrame) -> pd.Index:
+    """Index labels of the refund LINES that exactly reverse a sale line that cleaning removed.
+
+    A refund line matches a removed sale line when they have the same product, customer (two guests
+    count as equal, a guest never equals a real customer), country and price in whole pence, the
+    refund quantity is exactly minus the sale quantity, and the refund is dated on or after the sale.
+    Matching is one-to-one: each sale takes the earliest still-unused refund it is eligible for, going
+    through the sales oldest first. Lines are matched individually, never whole invoices.
+
+    Partial refunds (different quantity) and credits with no exact counterpart never match, so they
+    are kept.
+    """
+    if returns.empty or removed.empty:
+        return returns.index[:0]
+    refunds = _refund_match_frame(returns, -1).sort_values("date", kind="stable")
+    sales = _refund_match_frame(removed, +1).sort_values("date", kind="stable")
+
+    pool: dict[tuple, list] = {}  # match key -> [(refund date, refund label)], oldest first
+    for r in refunds.itertuples():
+        pool.setdefault((r.stock_code, r.customer, r.country, r.pence, r.quantity), []).append((r.date, r.Index))
+
+    matched = []
+    for s in sales.itertuples():
+        candidates = pool.get((s.stock_code, s.customer, s.country, s.pence, s.quantity), [])
+        for position, (refund_date, label) in enumerate(candidates):
+            if refund_date >= s.date:
+                matched.append(label)
+                del candidates[position]
+                break
+    return pd.Index(matched, dtype=returns.index.dtype) if matched else returns.index[:0]
+
+
+def partial_refunds_of_removed_sales(returns: pd.DataFrame, removed: pd.DataFrame) -> pd.Index:
+    """Refund lines with the same customer, product and price as a removed sale but a DIFFERENT quantity.
+
+    These are kept; they are only listed in the cleaning report for transparency. Pass the returns that
+    are left after `refunds_of_removed_sales` has been dropped.
+    """
+    if returns.empty or removed.empty:
+        return returns.index[:0]
+    refunds = _refund_match_frame(returns, -1)
+    sales = _refund_match_frame(removed, +1)
+    sold: dict[tuple, set] = {}
+    for s in sales.itertuples():
+        sold.setdefault((s.stock_code, s.customer, s.pence), set()).add(s.quantity)
+    flagged = [r.Index for r in refunds.itertuples()
+               if (r.stock_code, r.customer, r.pence) in sold and r.quantity not in sold[(r.stock_code, r.customer, r.pence)]]
+    return pd.Index(flagged, dtype=returns.index.dtype) if flagged else returns.index[:0]
+
+
+def _refund_summary(lines: pd.DataFrame, list_invoices: bool = False) -> dict:
+    """Count and value of refund lines. Money is summed in integer pence and rounded once at the end."""
+    pence = int((lines["quantity"].astype("int64").abs() * np.rint(lines["unit_price"].astype("float64") * 100).astype("int64")).sum())
+    out = {"lines": int(len(lines)), "refund_pence": pence, "refund": round(pence / 100, 2)}
+    if list_invoices:
+        out["invoices"] = sorted({str(i) for i in lines["invoice"]})
+    return out
+
+
 def clean(raw: pd.DataFrame) -> CleanResult:
     """Apply the cleaning rules in order. Pure function: no files, easy to unit-test."""
     df = raw.rename(columns=COLUMN_MAP)[list(COLUMN_MAP.values())].copy()
@@ -85,11 +165,12 @@ def clean(raw: pd.DataFrame) -> CleanResult:
     df["customer_id"] = df["customer_id"].astype("Int64")
     n_raw = len(df)
 
-    # 1. Exact duplicates. The two sheets overlap (1-9 Dec 2010) and a few lines are repeated.
+    # 1. Exact duplicates. Most come from the two sheets overlapping; the rest repeat inside one invoice.
     before = len(df)
     df = df.drop_duplicates()
-    log("Exact duplicate rows", "The two sheets overlap in early Dec 2010, so some rows appear twice.",
-        before, len(df))
+    log("Exact duplicate rows",
+        "Most duplicates come from the two sheets overlapping on 1-9 Dec 2010; the rest are lines repeated "
+        "inside one invoice.", before, len(df))
 
     # 2. Cancellations (invoice starts with "C") are real returns, not sales. Keep them in `returns`.
     is_cancel = df["invoice"].str.startswith("C")
@@ -124,7 +205,8 @@ def clean(raw: pd.DataFrame) -> CleanResult:
     # 6. Extreme prices: the same product sold at more than 20x its usual price is a typo.
     before = len(df)
     median_price = df.groupby("stock_code")["unit_price"].transform("median")
-    df = df[df["unit_price"] <= config.PRICE_OUTLIER_RATIO * median_price]
+    keep = df["unit_price"] <= config.PRICE_OUTLIER_RATIO * median_price
+    removed_by_price, df = df[~keep], df[keep]  # the removed lines are kept aside to find their refunds
     log(f"Price > {config.PRICE_OUTLIER_RATIO}x the product's median price",
         "Likely box-vs-unit or typing errors, e.g. a car flag with a median of £0.42 sold at "
         "£1,157. Expensive furniture is kept because its own median is also high. Only 0.2% of "
@@ -132,10 +214,22 @@ def clean(raw: pd.DataFrame) -> CleanResult:
 
     # 7. Extreme quantities: two single lines of 74,215 and 80,995 units were cancelled at once.
     before = len(df)
-    df = df[df["quantity"] <= config.MAX_LINE_QUANTITY]
+    keep = df["quantity"] <= config.MAX_LINE_QUANTITY
+    removed_by_quantity, df = df[~keep], df[keep]
     log(f"Quantity > {config.MAX_LINE_QUANTITY:,} in one line",
         "Both such lines (74,215 jars, 80,995 birdies) were cancelled the same day and would add "
         "£245k of fake revenue.", before, len(df))
+
+    # 8. Refunds of the sale lines removed by rules 6 and 7. Deleting a sale but keeping its refund
+    # would leave a refund with nothing to offset, understating revenue and inflating the return rate.
+    # Only LINES that exactly reverse a removed sale are dropped (see refunds_of_removed_sales);
+    # partial refunds and credits stay. This is reported in `notes`, not in `steps`, because `steps`
+    # counts the sales stream.
+    removed = pd.concat([removed_by_price, removed_by_quantity])
+    dropped = refunds_of_removed_sales(returns, removed)
+    dropped_lines = returns.loc[dropped]
+    returns = returns.drop(index=dropped)
+    partial_lines = returns.loc[partial_refunds_of_removed_sales(returns, removed)]
 
     df = df.sort_values(["invoice_date", "invoice", "stock_code"]).reset_index(drop=True)
     df["revenue"] = (df["quantity"] * df["unit_price"]).round(2)
@@ -156,6 +250,8 @@ def clean(raw: pd.DataFrame) -> CleanResult:
         "raw_rows": n_raw,
         "sales_rows": len(df),
         "returns_rows": len(returns),
+        "refunds_of_removed_sales": _refund_summary(dropped_lines, list_invoices=True),
+        "partial_refunds_of_removed_sales": _refund_summary(partial_lines),
         "guest_line_share": float(df["customer_id"].isna().mean()),
         "guest_revenue_share": float(df.loc[df["customer_id"].isna(), "revenue"].sum() / df["revenue"].sum()),
         "customers": int(df["customer_id"].nunique()),
@@ -193,6 +289,9 @@ def main() -> None:
     for s in res.steps:
         print(f"{s['rule']:<46}{s['removed']:>10,}{s['remaining']:>12,}")
     print(f"returns kept: {len(res.returns):,}")
+    r, p = res.notes["refunds_of_removed_sales"], res.notes["partial_refunds_of_removed_sales"]
+    print(f"refund lines of removed sales dropped: {r['lines']} (£{r['refund']:,.2f}) {r['invoices']}; "
+          f"partial refunds kept and listed: {p['lines']}")
     print(json.dumps(res.notes, indent=2))
 
 

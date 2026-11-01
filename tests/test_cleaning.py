@@ -70,3 +70,62 @@ def test_steps_account_for_every_row():
     res = pipeline.clean(raw)
     # rows the sales stream lost = sum of removed counts; what is left is the sales table
     assert len(raw) - sum(s["removed"] for s in res.steps) == len(res.sales)
+
+
+# ── refunds of removed sales (see also tests/test_refunds.py) ────────────────
+def raw_with_refunds():
+    """raw_frame() plus five cancellation lines dated the day after the sales:
+      C1014  an exact refund of the removed 60,000-unit sale 1012            -> dropped
+      C1015  TWO lines. Line 1 exactly refunds the removed 50x-median-price sale 1011 -> dropped
+             Line 2 is an ordinary credit (85123A, customer 2)               -> stays: lines are matched one by one, never whole invoices
+      C1016  a refund of a KEPT sale (22423, customer 3, £10)                 -> stays
+      C1017  59,000 of the removed 60,000 units: a partial refund             -> stays, and is listed
+    """
+    d = "2011-01-06 09:00"
+    base = raw_frame()
+    extra = pd.DataFrame([
+        ("C1014", "85123A", "WHITE HANGING HEART T-LIGHT HOLDER", -60000, d, 3.0, 4.0, "United Kingdom"),
+        ("C1015", "22423", "REGENCY CAKESTAND 3 TIER", -1, d, 500.0, 2.0, "France"),
+        ("C1015", "85123A", "WHITE HANGING HEART T-LIGHT HOLDER", -1, d, 3.0, 2.0, "France"),
+        ("C1016", "22423", "REGENCY CAKESTAND 3 TIER", -1, d, 10.0, 3.0, "France"),
+        ("C1017", "85123A", "WHITE HANGING HEART T-LIGHT HOLDER", -59000, d, 3.0, 4.0, "United Kingdom"),
+    ], columns=base.columns).assign(InvoiceDate=lambda x: pd.to_datetime(x["InvoiceDate"]))
+    return pd.concat([base, extra], ignore_index=True)
+
+
+def test_refunds_of_removed_sales_are_dropped_and_everything_else_is_kept():
+    res = pipeline.clean(raw_with_refunds())
+    assert sorted(res.returns["invoice"]) == ["C1006", "C1015", "C1016", "C1017"]
+    assert res.notes["returns_rows"] == 4
+    assert res.notes["refunds_of_removed_sales"] == {
+        "lines": 2, "refund_pence": 18_050_000, "refund": 180500.0, "invoices": ["C1014", "C1015"]}   # 60000 x 300p + 1 x 50000p
+
+
+def test_only_the_matching_line_of_a_multi_line_cancellation_is_dropped():
+    res = pipeline.clean(raw_with_refunds())
+    survivor = res.returns[res.returns["invoice"] == "C1015"]
+    assert survivor["stock_code"].tolist() == ["85123A"]          # the 22423 line went, its sibling stayed
+
+
+def test_a_partial_refund_is_kept_and_listed_in_the_report():
+    res = pipeline.clean(raw_with_refunds())
+    assert res.notes["partial_refunds_of_removed_sales"] == {"lines": 1, "refund_pence": 17_700_000, "refund": 177000.0}   # 59000 x 300p
+
+
+def test_refund_handling_never_changes_the_sales_stream_or_the_steps_table():
+    plain, with_refunds = pipeline.clean(raw_frame()), pipeline.clean(raw_with_refunds())
+    pd.testing.assert_frame_equal(plain.sales, with_refunds.sales)
+    assert len(with_refunds.steps) == 7                          # the refund drop is reported in `notes`, not as a step
+    assert [s["removed"] for s in with_refunds.steps] == [1, 6, 2, 1, 1, 1, 1]   # only the cancellation count grows (1 -> 6)
+
+
+def test_plain_frame_reports_no_refunds_of_removed_sales():
+    res = pipeline.clean(raw_frame())
+    assert res.notes["refunds_of_removed_sales"] == {"lines": 0, "refund_pence": 0, "refund": 0.0, "invoices": []}
+    assert res.notes["partial_refunds_of_removed_sales"]["lines"] == 0
+
+
+def test_rule_one_explanation_describes_the_overlap_without_hard_coded_counts():
+    why = pipeline.clean(raw_frame()).steps[0]["why"]
+    assert "overlapping" in why and "inside one invoice" in why
+    assert not any(ch.isdigit() for ch in why.replace("1-9 Dec 2010", ""))
