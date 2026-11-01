@@ -1,0 +1,11 @@
+# Offline work that runs once on a laptop: cleaning, embeddings, model training.
+#     python3.12 -m venv .venv && source .venv/bin/activate
+#     pip install -r requirements-train.txt && pip install -e .
+# macOS only, optional: LightGBM needs the OpenMP runtime ->  brew install libomp
+# (without it the model code falls back to scikit-learn's HistGradientBoostingClassifier)
+-r requirements-dev.txt
+python-calamine>=0.2        # fast Excel reader (openpyxl needs several GB of RAM for 1M rows)
+requests>=2.31              # download the UCI zip
+lightgbm>=4.3
+fastembed>=0.3              # MiniLM sentence embeddings (ONNX, same as the ATS project)
+torch>=2.2                  # only mlp.py imports it; the deployed app never does

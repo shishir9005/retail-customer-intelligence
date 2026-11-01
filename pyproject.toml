@@ -1,0 +1,12 @@
+[project]
+name = "retail-customer-intelligence"
+version = "0.1.0"
+description = "Retail analytics on UCI Online Retail II: SQL dashboard, RFM segments, repurchase model, text-to-SQL analyst"
+requires-python = ">=3.10"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

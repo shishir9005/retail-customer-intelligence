@@ -1,0 +1,111 @@
+{
+  "steps": [
+    {
+      "rule": "Exact duplicate rows",
+      "why": "The two sheets overlap in early Dec 2010, so some rows appear twice.",
+      "removed": 34335,
+      "remaining": 1033036
+    },
+    {
+      "rule": "Cancellation invoices moved to returns",
+      "why": "Invoices starting with 'C' are returns. They would subtract from revenue and confuse order counts, so they live in their own table.",
+      "removed": 19104,
+      "remaining": 1013932
+    },
+    {
+      "rule": "Non-product stock codes",
+      "why": "POST, DOT, M, D, BANK CHARGES, AMAZONFEE, ADJUST, TEST001, gift vouchers... are fees or bookkeeping lines, not products.",
+      "removed": 4633,
+      "remaining": 1009299
+    },
+    {
+      "rule": "Quantity <= 0",
+      "why": "Negative quantities on non-cancel invoices are stock adjustments ('damaged', 'lost'), not purchases.",
+      "removed": 3390,
+      "remaining": 1005909
+    },
+    {
+      "rule": "Unit price <= 0",
+      "why": "Free items and manual adjustments carry no revenue information.",
+      "removed": 2571,
+      "remaining": 1003338
+    },
+    {
+      "rule": "Price > 20x the product's median price",
+      "why": "e.g. a 'car flag' normally \u00a31.7 listed at \u00a31,157. Cheap furniture at \u00a3125+ is not removed because its median is also high.",
+      "removed": 93,
+      "remaining": 1003245
+    },
+    {
+      "rule": "Quantity > 50,000 in one line",
+      "why": "Both such lines (74,215 jars, 80,995 birdies) were cancelled the same day and would add \u00a3245k of fake revenue.",
+      "removed": 2,
+      "remaining": 1003243
+    }
+  ],
+  "summary": {
+    "raw_rows": 1067371,
+    "sales_rows": 1003243,
+    "returns_rows": 17914,
+    "guest_line_share": 0.2259372853835013,
+    "guest_revenue_share": 0.13281467982933928,
+    "customers": 5852,
+    "orders": 39500,
+    "products": 4722,
+    "countries": 43,
+    "first_date": "2009-12-01 07:45:00",
+    "last_date": "2011-12-09 12:50:00"
+  },
+  "checks": [
+    {
+      "check": "No missing invoice, stock code, date, quantity, price or country in sales",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "Every sale has quantity > 0 and unit price > 0",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "Every return has quantity < 0",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "revenue = quantity x unit price (to the penny)",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "No invoice starts with 'C' in sales (cancellations live in returns)",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "Every stock code looks like a product code",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "Every sold stock code has a product record",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "No invoice is split across two customers",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "Dates fall inside the dataset's published range (Dec 2009 - Dec 2011)",
+      "offending_rows": 0,
+      "passed": true
+    },
+    {
+      "check": "No sale line above the extreme-quantity limit",
+      "offending_rows": 0,
+      "passed": true
+    }
+  ]
+}

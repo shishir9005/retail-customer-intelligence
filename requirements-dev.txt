@@ -1,0 +1,5 @@
+# What CI and the unit tests need on top of the app.
+-r requirements.txt
+pytest>=8.0
+scikit-learn>=1.4
+statsmodels>=0.14           # tests cross-check our hand-written power analysis against it

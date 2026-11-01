@@ -1,0 +1,222 @@
+{
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "chosen_k": 16,
+  "silhouette_by_k": {
+    "8": 0.0338,
+    "10": 0.037,
+    "12": 0.04,
+    "14": 0.0442,
+    "16": 0.046
+  },
+  "categories": [
+    {
+      "id": 9,
+      "name": "Chicks / Easter / Birdhouse",
+      "n_products": 600,
+      "typical_products": [
+        "BUNNY EGG BOX",
+        "BUNNY EGG GARLAND",
+        "BUNNY WOODEN PAINTED WITH BIRD",
+        "CREAM BUNNY EASTER EGG BASKET",
+        "BLUE BUNNY EASTER EGG BASKET",
+        "PINK BUNNY EASTER EGG BASKET"
+      ]
+    },
+    {
+      "id": 15,
+      "name": "Knob / Diner / Cutlery",
+      "n_products": 524,
+      "typical_products": [
+        "ANTIQUE CREAM CUTLERY CUPBOARD",
+        "ANTIQUE CREAM CUTLERY SHELF",
+        "16 PIECE CUTLERY SET PANTRY DESIGN",
+        "SET OF 4 NAPKIN CHARMS CUTLERY",
+        "LUNCH BOX WITH CUTLERY RETROSPOT",
+        "SNACK TRAY RED VINTAGE DOILY"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Letter / Pencils / Bling",
+      "n_products": 431,
+      "typical_products": [
+        "ASSTD DESIGN 3D PAPER STICKERS",
+        "HEARTS PENCIL/RUBBER+5 MINI PENCILS",
+        "WHITE BELL HONEYCOMB PAPER",
+        "12 PENCILS SMALL TUBE SKULL",
+        "36 PENCILS TUBE SKULLS",
+        "TEATIME PENCIL W STAMP ASST"
+      ]
+    },
+    {
+      "id": 0,
+      "name": "Cushion / Cover / Folding",
+      "n_products": 363,
+      "typical_products": [
+        "WHITE STITCHED CUSHION COVER",
+        "BLUE POLKADOT WRAP",
+        "PINK POLKADOT WRAP",
+        "WOVEN CANDY CUSHION COVER",
+        "BLUE SCANDINAVIAN PAISLEY WRAP",
+        "CROSS STITCH ALPHABET CUSHION COVER"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Necklace / Earrings / Bracelet",
+      "n_products": 324,
+      "typical_products": [
+        "AMBER GLASS/SHELL/PEARL NECKLACE",
+        "BLACK GLASS/SHELL/PEARL NECKLACE",
+        "AMBER CHUNKY GLASS+BEAD NECKLACE",
+        "WHITE/PINK MINI CRYSTALS NECKLACE",
+        "GLASS BEAD HOOP NECKLACE BLACK",
+        "GLASS BEAD HOOP NECKLACE GREEN"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Candles / Incense / Morris",
+      "n_products": 289,
+      "typical_products": [
+        "ORANGE CANDLE",
+        "SMALL SILVER FLOWER CANDLE POT",
+        "BLUE POT PLANT CANDLE",
+        "YELLOW POT PLANT CANDLE",
+        "PINK POT PLANT CANDLE",
+        "LARGE WHITE CHOCOLATE CANDLE"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Mug / Towels / Coffee",
+      "n_products": 286,
+      "typical_products": [
+        "VINTAGE RED TEATIME MUG",
+        "ORANGE FLOWER MUG",
+        "PINK/GREEN FLOWER DESIGN BIG MUG",
+        "GREEN/BLUE FLOWER DESIGN BIG MUG",
+        "BLUE/YELLOW FLOWER DESIGN BIG MUG",
+        "YELLOW/PINK FLOWER DESIGN BIG MUG"
+      ]
+    },
+    {
+      "id": 13,
+      "name": "Hearts / Beaded / Jazz",
+      "n_products": 279,
+      "typical_products": [
+        "WHITE JEWELLED HEART DECORATION",
+        "PADDED RED HEART DECORATION",
+        "HEART DECORATION WITH PEARLS",
+        "PINK HEART CHRISTMAS DECORATION",
+        "WHITE CHRISTMAS HEART DECORATION",
+        "IVORY HANGING DECORATION HEART"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Incense / Artificial / Origami",
+      "n_products": 274,
+      "typical_products": [
+        "LARGE WHITE/PINK ROSE ART FLOWER",
+        "MEDIUM WHITE/PINK ROSE ART FLOWER",
+        "SMALL WHITE/PINK ROSE ART FLOWER",
+        "MODERN FLORAL STATIONERY SET",
+        "FLORAL FOLK STATIONERY SET",
+        "ORIGAMI ROSE INCENSE+FLOWER"
+      ]
+    },
+    {
+      "id": 10,
+      "name": "Bag / Handbag / Washbag",
+      "n_products": 240,
+      "typical_products": [
+        "POSY SHOPPER BAG",
+        "RED RETROSPOT SHOPPER BAG",
+        "VINTAGE CHRISTMAS GIFT BAG LARGE",
+        "VINTAGE BEAD PINK EVENING BAG",
+        "PINK RETRO BIG FLOWER BAG",
+        "LITTLE FLOWER SHOPPER BAG"
+      ]
+    },
+    {
+      "id": 11,
+      "name": "Cakes / Pan / Cases",
+      "n_products": 214,
+      "typical_products": [
+        "FAIRY CAKES RECTANGLUAR BOXES",
+        "SET OF 12 FAIRY CAKE BAKING CASES",
+        "LUNCH BOX WITH CUTLERY FAIRY CAKES",
+        "SET OF 4 FAIRY CAKE PLACEMATS",
+        "SET OF 4 FAIRY CAKE PLACEMATS",
+        "FAIRY CAKES ROUND NESTING BOXES"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "Lampshade / Lantern / Lamp",
+      "n_products": 213,
+      "typical_products": [
+        "MULTI COLOUR SILVER T-LIGHT HOLDER",
+        "ASSORTED COLOUR T-LIGHT HOLDER",
+        "BLACK SILVER FLOWER T-LIGHT HOLDER",
+        "BLUE FLOWER T-LIGHT HOLDER",
+        "VICTORIAN GLASS HANGING T-LIGHT",
+        "STAR T-LIGHT HOLDER"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Mirrored / Mirror / Album",
+      "n_products": 211,
+      "typical_products": [
+        "MIRRORED WALL ART PHOTO FRAMES",
+        "GOLD PHOTO FRAME",
+        "SILVER PHOTO FRAME",
+        "PINK OVAL JEWELLED MIRROR",
+        "SILVER OVAL JEWELLED MIRROR",
+        "LARGE ANTIQUE WHITE PHOTO FRAME"
+      ]
+    },
+    {
+      "id": 14,
+      "name": "Christmas / Stocking / Tree",
+      "n_products": 196,
+      "typical_products": [
+        "ASSORTED SANTA CHRISTMAS DECORATION",
+        "WHITE CHRISTMAS TREE DECORATION",
+        "PINK CHRISTMAS TREE DECORATION",
+        "TURQUOISE CHRISTMAS TREE",
+        "PINK STAR CHRISTMAS DECORATION",
+        "STAR WOODEN CHRISTMAS DECORATION"
+      ]
+    },
+    {
+      "id": 12,
+      "name": "Cards / Wallet / Playing",
+      "n_products": 155,
+      "typical_products": [
+        "SET 10 CARD CHRISTMAS WELCOME 17112",
+        "SET 10 CARDS CHRISTMAS TREE 16955",
+        "SET 10 CHRISTMAS CARDS HOHOHO 16956",
+        "SET 10 CARDS CHRISTMAS BAUBLE 16954",
+        "SET 10 CARDS 12 DAYS OF XMAS 17059",
+        "SET 10 CARDS CHRISTMAS ROBIN 17095"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Sign / Door / Doormat",
+      "n_products": 123,
+      "typical_products": [
+        "FRENCH BLUE METAL DOOR SIGN 3",
+        "FRENCH BLUE METAL DOOR SIGN 9",
+        "FRENCH BLUE METAL DOOR SIGN 1",
+        "FRENCH BLUE METAL DOOR SIGN 2",
+        "FRENCH BLUE METAL DOOR SIGN 8",
+        "FRENCH BLUE METAL DOOR SIGN 7"
+      ]
+    }
+  ],
+  "notes": "Silhouette is low (< 0.06) because product descriptions are short and overlap. It keeps rising with k, so the grid stops at 16 to keep categories readable. Categories are fuzzy groups, not an official catalogue."
+}

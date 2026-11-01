@@ -1,0 +1,260 @@
+{
+  "as_of": "2011-12-10",
+  "chosen_k": 4,
+  "silhouette_by_k": {
+    "2": 0.4382,
+    "3": 0.3485,
+    "4": 0.3665,
+    "5": 0.3438,
+    "6": 0.3363,
+    "7": 0.3064,
+    "8": 0.2952
+  },
+  "pca_explained_variance": [
+    0.764,
+    0.1879
+  ],
+  "validation_cutoff": "2011-09-09",
+  "segments": [
+    {
+      "segment": "Champions",
+      "customers": 1190,
+      "customer_share": 0.2033,
+      "revenue_share": 0.7376,
+      "avg_recency_days": 28.5,
+      "avg_orders": 19.2,
+      "avg_spend": 10403.0,
+      "median_spend": 4889.0,
+      "action": "Reward and retain: loyalty perks, early access, ask for reviews. Do not discount; they already buy.",
+      "repurchase_rate_next_90d": 0.8411,
+      "validation_customers": 900
+    },
+    {
+      "segment": "At risk",
+      "customers": 1446,
+      "customer_share": 0.2471,
+      "revenue_share": 0.1627,
+      "avg_recency_days": 229.3,
+      "avg_orders": 5.0,
+      "avg_spend": 1889.0,
+      "median_spend": 1448.0,
+      "action": "Win back: a personalised reminder with an incentive. Test it with an A/B experiment first.",
+      "repurchase_rate_next_90d": 0.4588,
+      "validation_customers": 1552
+    },
+    {
+      "segment": "Promising",
+      "customers": 1259,
+      "customer_share": 0.2151,
+      "revenue_share": 0.0629,
+      "avg_recency_days": 29.1,
+      "avg_orders": 3.0,
+      "avg_spend": 838.0,
+      "median_spend": 717.0,
+      "action": "Nurture: a second-purchase offer and product suggestions to turn them into regulars.",
+      "repurchase_rate_next_90d": 0.5457,
+      "validation_customers": 733
+    },
+    {
+      "segment": "Hibernating",
+      "customers": 1957,
+      "customer_share": 0.3344,
+      "revenue_share": 0.0368,
+      "avg_recency_days": 395.0,
+      "avg_orders": 1.4,
+      "avg_spend": 315.0,
+      "median_spend": 273.0,
+      "action": "Low-cost reactivation only (one email). Do not spend much on them.",
+      "repurchase_rate_next_90d": 0.1978,
+      "validation_customers": 2068
+    }
+  ],
+  "validation": {
+    "method": "At each cutoff the whole recipe (scaler, k, KMeans, names) is refitted using only RFM as of that date, then the share of customers who ordered in the next 90 days is measured per segment.",
+    "horizon_days": 90,
+    "primary_cutoff": "2011-09-09",
+    "by_cutoff": [
+      {
+        "split": "train",
+        "cutoff": "2010-06-09",
+        "k": 4,
+        "silhouette": 0.3497,
+        "customers": 2760,
+        "overall_rate": 0.4837,
+        "segments": [
+          {
+            "segment": "Champions",
+            "customers": 304,
+            "repurchase_rate": 0.9046
+          },
+          {
+            "segment": "At risk",
+            "customers": 858,
+            "repurchase_rate": 0.6259
+          },
+          {
+            "segment": "Promising",
+            "customers": 414,
+            "repurchase_rate": 0.4589
+          },
+          {
+            "segment": "Hibernating",
+            "customers": 1184,
+            "repurchase_rate": 0.2812
+          }
+        ]
+      },
+      {
+        "split": "train",
+        "cutoff": "2010-09-09",
+        "k": 4,
+        "silhouette": 0.3692,
+        "customers": 3337,
+        "overall_rate": 0.5784,
+        "segments": [
+          {
+            "segment": "Champions",
+            "customers": 477,
+            "repurchase_rate": 0.8868
+          },
+          {
+            "segment": "At risk",
+            "customers": 1004,
+            "repurchase_rate": 0.6932
+          },
+          {
+            "segment": "Promising",
+            "customers": 494,
+            "repurchase_rate": 0.5486
+          },
+          {
+            "segment": "Hibernating",
+            "customers": 1362,
+            "repurchase_rate": 0.3965
+          }
+        ]
+      },
+      {
+        "split": "train",
+        "cutoff": "2010-12-09",
+        "k": 4,
+        "silhouette": 0.3343,
+        "customers": 4282,
+        "overall_rate": 0.3106,
+        "segments": [
+          {
+            "segment": "Champions",
+            "customers": 749,
+            "repurchase_rate": 0.7223
+          },
+          {
+            "segment": "At risk",
+            "customers": 1179,
+            "repurchase_rate": 0.3401
+          },
+          {
+            "segment": "Promising",
+            "customers": 943,
+            "repurchase_rate": 0.2492
+          },
+          {
+            "segment": "Hibernating",
+            "customers": 1411,
+            "repurchase_rate": 0.1084
+          }
+        ]
+      },
+      {
+        "split": "train",
+        "cutoff": "2011-03-09",
+        "k": 4,
+        "silhouette": 0.3817,
+        "customers": 4559,
+        "overall_rate": 0.3481,
+        "segments": [
+          {
+            "segment": "Champions",
+            "customers": 705,
+            "repurchase_rate": 0.8043
+          },
+          {
+            "segment": "Promising",
+            "customers": 483,
+            "repurchase_rate": 0.3954
+          },
+          {
+            "segment": "At risk",
+            "customers": 1540,
+            "repurchase_rate": 0.3695
+          },
+          {
+            "segment": "Hibernating",
+            "customers": 1831,
+            "repurchase_rate": 0.142
+          }
+        ]
+      },
+      {
+        "split": "valid",
+        "cutoff": "2011-06-09",
+        "k": 4,
+        "silhouette": 0.3711,
+        "customers": 4941,
+        "overall_rate": 0.3234,
+        "segments": [
+          {
+            "segment": "Champions",
+            "customers": 796,
+            "repurchase_rate": 0.7852
+          },
+          {
+            "segment": "Promising",
+            "customers": 686,
+            "repurchase_rate": 0.4315
+          },
+          {
+            "segment": "At risk",
+            "customers": 1479,
+            "repurchase_rate": 0.3097
+          },
+          {
+            "segment": "Hibernating",
+            "customers": 1980,
+            "repurchase_rate": 0.1106
+          }
+        ]
+      },
+      {
+        "split": "test",
+        "cutoff": "2011-09-09",
+        "k": 4,
+        "silhouette": 0.3779,
+        "customers": 5253,
+        "overall_rate": 0.4337,
+        "segments": [
+          {
+            "segment": "Champions",
+            "customers": 900,
+            "repurchase_rate": 0.8411
+          },
+          {
+            "segment": "Promising",
+            "customers": 733,
+            "repurchase_rate": 0.5457
+          },
+          {
+            "segment": "At risk",
+            "customers": 1552,
+            "repurchase_rate": 0.4588
+          },
+          {
+            "segment": "Hibernating",
+            "customers": 2068,
+            "repurchase_rate": 0.1978
+          }
+        ]
+      }
+    ]
+  },
+  "notes": "Silhouette is highest at k=2 (active vs lapsed), but k is chosen from 3-6 because two segments are not actionable. The segment table describes customers as of the end of the data. The 'bought again' rates come from segments refitted at the validation cutoff using only earlier data, so the future cannot shape the segment boundaries."
+}
