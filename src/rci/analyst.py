@@ -187,8 +187,11 @@ def summarize_result(question: str, df: pd.DataFrame, complete: Completer) -> st
         return "The query returned no rows."
     if len(df) > 25 or df.shape[1] > 8:
         return fallback
+    csv = df.to_csv(index=False)
+    if len(csv) > config.ANALYST_SUMMARY_MAX_CHARS:  # a few long values can still make a small result huge
+        return fallback
     prompt = (
-        f"Question: {question}\nResult (CSV):\n{df.to_csv(index=False)}\n"
+        f"Question: {question}\nResult (CSV):\n{csv}\n"
         "Answer the question in ONE short sentence using ONLY numbers that appear in the result. "
         "Money is in GBP. Do not add any other information."
     )

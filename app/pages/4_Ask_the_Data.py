@@ -169,11 +169,12 @@ with st.expander("How the SQL guard keeps this safe"):
 An LLM can write wrong SQL, or SQL that a hostile question talked it into. Its output is never run directly:
 
 1. **Parse.** DuckDB's own parser must accept it, as **exactly one statement of type SELECT** (this rejects DROP, INSERT, COPY, ATTACH, PRAGMA, SET...).
-2. **Tables.** Only `sales`, `returns`, `products` and `customers` may be read.
-3. **Functions.** File-reading and system functions (`read_csv`, `glob`, `duckdb_settings`...) are refused.
+2. **Tables.** Only `sales`, `returns`, `products` and `customers` may be read. A WITH query can't reuse the name of a system view (such as `sqlite_master` or `duckdb_tables`), so it can't be used to disguise a read of one.
+3. **Functions.** File-reading and system functions (`read_csv`, `glob`, `duckdb_settings`...) are refused, and so are the functions that can build one enormous value: `string_agg`, `group_concat`, `listagg`, `list`, `array_agg`, `histogram` and `repeat`.
 4. **Row cap.** The query is wrapped in `SELECT * FROM (...) LIMIT 1000`.
-5. **Timeout.** A timer interrupts any query running longer than 15 seconds.
-6. **Locked database.** The connection has file access switched off and its settings locked, so even a missed case cannot touch the disk.
+5. **Result size.** Results stream in small batches and are refused as soon as they pass 2 MB in total, 10 KB in any single value (also inside lists, structs and maps) or 1,000 items in a list.
+6. **Timeout.** A timer interrupts any query running longer than 15 seconds.
+7. **Locked database.** The connection has file access switched off and its settings locked, so even a missed case cannot touch the disk.
 
 One repair attempt: if the SQL fails or is rejected, the error is sent back to the model once. Identical questions are cached,
 and each session and the whole app have a question limit, so visitors cannot burn the free LLM quota.

@@ -34,6 +34,13 @@ SPLITS = {
 GROQ_MODEL = "openai/gpt-oss-120b"
 ANALYST_MAX_ROWS = 1000
 ANALYST_TIMEOUT_S = 15
+# Result-size limits (sql_guard.run_guarded). The result streams in batches of ANALYST_BATCH_ROWS and each batch
+# is checked BEFORE it is kept, so an over-limit result never reaches pandas, Streamlit or the LLM.
+ANALYST_MAX_RESULT_BYTES = 2_000_000   # all batches together
+ANALYST_MAX_CELL_BYTES = 10_000        # one string or binary value, also inside lists, structs and maps
+ANALYST_MAX_LIST_ITEMS = 1_000         # items in one list value
+ANALYST_BATCH_ROWS = 256
+ANALYST_SUMMARY_MAX_CHARS = 4_000      # a bigger result is not sent to the LLM for a one-line summary
 
 
 def load_env() -> None:
