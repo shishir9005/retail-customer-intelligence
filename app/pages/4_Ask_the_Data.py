@@ -170,13 +170,20 @@ An LLM can write wrong SQL, or SQL that a hostile question talked it into. Its o
 
 1. **Parse.** DuckDB's own parser must accept it, as **exactly one statement of type SELECT** (this rejects DROP, INSERT, COPY, ATTACH, PRAGMA, SET...).
 2. **Tables.** Only `sales`, `returns`, `products` and `customers` may be read. A WITH query can't reuse the name of a system view (such as `sqlite_master` or `duckdb_tables`), so it can't be used to disguise a read of one.
-3. **Functions.** File-reading and system functions (`read_csv`, `glob`, `duckdb_settings`...) are refused, and so are the functions that can build one enormous value: `string_agg`, `group_concat`, `listagg`, `list`, `array_agg`, `histogram` and `repeat`.
+3. **Functions.** File-reading and system functions (`read_csv`, `glob`, `duckdb_settings`...) are refused, and so are the functions that can build one enormous value: `string_agg`, `group_concat`, `listagg`, `list`, `array_agg`, `histogram`, `repeat`, `lpad`, `rpad`, `printf`, `format`, `json_group_array`, `json_group_object`, `list_resize` and `array_resize`. `range` and `generate_series` are allowed only as a table in FROM (`FROM range(3)`); used as an ordinary function (`SELECT range(100000000)`, or inside a list comprehension) they are refused too. Recursive WITH queries are refused as well, because they can grow without limit; an ordinary WITH is fine.
 4. **Row cap.** The query is wrapped in `SELECT * FROM (...) LIMIT 1000`.
-5. **Result size.** Results stream in small batches and are refused as soon as they pass 2 MB in total, 10 KB in any single value (also inside lists, structs and maps) or 1,000 items in a list.
+5. **Result size.** Results stream in small batches and are refused as soon as they pass 2 MB in total, 10 KB in any single value (also inside lists, structs, maps and unions) or 1,000 items in a list.
 6. **Timeout.** A timer interrupts any query running longer than 15 seconds.
 7. **Locked database.** The connection has file access switched off and its settings locked, so even a missed case cannot touch the disk.
 
 One repair attempt: if the SQL fails or is rejected, the error is sent back to the model once. Identical questions are cached,
-and each session and the whole app have a question limit, so visitors cannot burn the free LLM quota.
+and each session and the whole app have a question limit.
+
+**What this does not guarantee.** The DuckDB memory limit and the timeout are safety nets, not hard isolation.
+The memory limit does not cap every allocation (large lists can exceed it), and the timer cannot interrupt a single long-running function.
+The question limits (15 per session, 40 per hour across the app) protect the free LLM quota and slow down repeated abuse.
+They do not protect against a single expensive query: one query is enough to cause a large memory spike.
+The robust protection would be process isolation: running each analyst query in a separate worker process with an operating-system memory cap, killed outright when it runs too long.
+That is outside the scope of this project.
         """
     )

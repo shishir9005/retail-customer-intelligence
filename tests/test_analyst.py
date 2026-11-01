@@ -179,7 +179,8 @@ def test_the_row_and_column_rule_is_unchanged():
 
 
 def test_the_repair_loop_recovers_when_the_first_sql_is_over_a_size_cap(con):
-    llm = fake_llm("SELECT lpad('x', 50000, 'x') AS big", "SELECT 1 AS n")
+    con.execute("UPDATE products SET description = repeat('x', 50000) WHERE stock_code = '22423'")   # setup data, built outside the guard
+    llm = fake_llm("SELECT description FROM products WHERE stock_code = '22423'", "SELECT 1 AS n")
     ans = analyst.ask(con, "something big", llm, summarize=False)
     assert ans.attempts == 2 and ans.guard_blocked and ans.error is None
     assert ans.data["n"][0] == 1
@@ -192,3 +193,31 @@ def test_the_repair_loop_recovers_when_the_first_sql_uses_a_denied_function(con)
     assert ans.attempts == 2 and ans.guard_blocked and ans.error is None
     assert ans.data["n"][0] == 9
     assert "top-N" in llm.calls["messages"][1][-1]["content"]
+
+
+def test_the_repair_loop_recovers_when_the_first_sql_uses_a_newly_denied_function(con):
+    llm = fake_llm("SELECT lpad('x', 50, 'x') AS s", "SELECT 1 AS n")
+    ans = analyst.ask(con, "pad something", llm, summarize=False)
+    assert ans.attempts == 2 and ans.guard_blocked and ans.error is None
+    assert "top-N" in llm.calls["messages"][1][-1]["content"]
+
+
+def test_the_repair_loop_recovers_when_the_first_sql_is_a_recursive_with(con):
+    llm = fake_llm("WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT * FROM r", "SELECT 1 AS n")
+    ans = analyst.ask(con, "count up", llm, summarize=False)
+    assert ans.attempts == 2 and ans.guard_blocked and ans.error is None
+    assert "Recursive WITH queries are not allowed" in llm.calls["messages"][1][-1]["content"]
+
+
+LATE_ERRORS = [
+    "SELECT CASE WHEN i < 600 THEN i ELSE error('late') END AS x FROM range(2000) t(i)",                 # raised while the reader is created
+    "SELECT i FROM range(10000) t(i) WHERE (CASE WHEN i < 5000 THEN i ELSE error('late') END) % 10 = 0",  # raised while it is being read
+]
+
+
+@pytest.mark.parametrize("late", LATE_ERRORS, ids=["in_the_first_vector", "while_iterating"])
+def test_the_repair_loop_recovers_from_a_runtime_error_that_happens_after_the_first_batch(con, late):
+    llm = fake_llm(late, "SELECT 1 AS n")
+    ans = analyst.ask(con, "fail late", llm, summarize=False)
+    assert ans.attempts == 2 and ans.error is None and not ans.guard_blocked      # a database error, not a guard rejection
+    assert "late" in llm.calls["messages"][1][-1]["content"]

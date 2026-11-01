@@ -17,11 +17,22 @@ drop the table"). We never run its output directly. Each query passes these laye
                   before the query runs: a size cap on the result cannot stop the engine building it first.
   4. ROW CAP      The query is wrapped in `SELECT * FROM (...) LIMIT n`, so it can never return a flood.
   5. RESULT SIZE  The result streams in batches of 256 rows and each batch is checked BEFORE it is kept:
-                  2 MB in total, 10 KB in any single value (also inside lists, structs and maps) and 1,000
-                  items in any list. Nothing over those limits reaches pandas, Streamlit or the LLM.
+                  2 MB in total, 10 KB in any single value (also inside lists, structs, maps and unions) and
+                  1,000 items in any list. Nothing over those limits reaches pandas, Streamlit or the LLM.
   6. TIMEOUT      A timer interrupts any query that runs too long (e.g. an accidental cross join).
   7. LOCK         db.connect() already switched off all file access and locked the settings, so even if
                   layers 1-3 had a hole the database could not touch the disk.
+
+Task 2b: also refused before the query runs are lpad, rpad, printf, format, json_group_array, json_group_object,
+list_resize, array_resize, and range / generate_series used as SCALAR functions (as a table function in FROM they stay
+allowed). Recursive WITH queries are refused too, because they can grow without limit.
+
+What this does not guarantee. The DuckDB memory limit and the timeout are safety nets, not hard isolation. The memory
+limit does not cap every allocation (large lists can exceed it), and the timer cannot interrupt a single long-running
+function. The question limits (15 per session, 40 per hour across the app) protect the free LLM quota and slow down
+repeated abuse. They do not protect against a single expensive query: one query is enough to cause a large memory spike.
+The robust protection would be process isolation: running each analyst query in a separate worker process with an
+operating-system memory cap, killed outright when it runs too long. That is outside the scope of this project.
 """
 from __future__ import annotations
 
@@ -38,7 +49,11 @@ from rci import config
 
 ALLOWED_TABLES = frozenset({"sales", "returns", "products", "customers"})
 ALLOWED_TABLE_FUNCTIONS = frozenset({"range", "generate_series", "unnest"})  # harmless row generators
-DENIED_FUNCTIONS = frozenset({"string_agg", "group_concat", "listagg", "list", "array_agg", "histogram", "repeat"})
+DENIED_FUNCTIONS = frozenset({
+    "string_agg", "group_concat", "listagg", "list", "array_agg", "histogram", "repeat",            # Task 2
+    "range", "generate_series", "list_resize", "array_resize", "json_group_array", "json_group_object",  # Task 2b
+    "lpad", "rpad", "printf", "format",
+})
 RESERVED_WITH_PREFIXES = ("duckdb_", "sqlite_", "pragma_", "pg_", "information_schema")
 MAX_SQL_CHARS = 4000
 
@@ -139,21 +154,36 @@ def _with_names(tree: dict) -> set[str]:
 
 
 def _function_names(tree: dict) -> set[str]:
-    """Every function the query calls, by its bare lower-cased name (so main.string_agg is string_agg)."""
+    """Every function the query calls, by its bare lower-cased name (so main.string_agg is string_agg).
+
+    The one name NOT counted is the function a TABLE_FUNCTION node owns directly: `FROM range(3)` is a table
+    function (allowed), while `SELECT range(3)` and `FROM unnest(range(3))` call scalar `range` (denied). The
+    arguments of a table function and every other part of the query are still walked.
+    """
     names: set[str] = set()
 
-    def walk(node) -> None:
+    def walk(node, owned_by_table_function: bool = False) -> None:
         if isinstance(node, dict):
-            if "function_name" in node:
+            if "function_name" in node and not owned_by_table_function:
                 names.add(str(node["function_name"]).lower())
-            for value in node.values():
-                walk(value)
+            is_table_function = node.get("type") == "TABLE_FUNCTION"
+            for key, value in node.items():
+                walk(value, owned_by_table_function=is_table_function and key == "function")
         elif isinstance(node, list):
             for value in node:
                 walk(value)
 
     walk(tree)
     return names
+
+
+def _has_recursive_cte(tree: dict) -> bool:
+    """True if any part of the query is a genuinely recursive WITH. The RECURSIVE keyword alone makes no such node."""
+    if isinstance(tree, dict):
+        return tree.get("type") == "RECURSIVE_CTE_NODE" or any(_has_recursive_cte(v) for v in tree.values())
+    if isinstance(tree, list):
+        return any(_has_recursive_cte(v) for v in tree)
+    return False
 
 
 def parse_references(sql: str) -> tuple[set[str], set[str]]:
@@ -216,6 +246,8 @@ def validate_sql(sql: str, allowed_tables=ALLOWED_TABLES, reserved_names=frozens
     if denied:
         raise GuardError(f"The function '{denied[0]}' is not allowed because it can build one enormous value. "
                          "Ask for counts or a top-N instead.")
+    if _has_recursive_cte(tree):
+        raise GuardError("Recursive WITH queries are not allowed, because they can grow without limit.")
     reserved = {n.lower() for n in reserved_names}
     for name in sorted(_with_names(tree)):
         if _unusable_with_name(name, allowed, reserved):
@@ -236,8 +268,20 @@ def wrap_with_limit(sql: str, max_rows: int = config.ANALYST_MAX_ROWS) -> str:
 def _check_array(array: pa.Array, column: str) -> None:
     """Refuse an oversized value anywhere inside this column, however deeply it is nested."""
     kind = array.type
-    if pa.types.is_dictionary(kind):
+    if isinstance(kind, pa.BaseExtensionType):                     # e.g. DuckDB's BIGNUM: an opaque extension over binary
+        _check_array(array.storage, column)
+    elif pa.types.is_dictionary(kind):
         _check_array(array.dictionary, column)
+    elif pa.types.is_string_view(kind) or pa.types.is_binary_view(kind):
+        # pc.binary_length has no kernel for view types, so cast to the wide type first (safe: the 2 MB total check came first)
+        _check_array(array.cast(pa.large_string() if pa.types.is_string_view(kind) else pa.large_binary()), column)
+    elif pa.types.is_fixed_size_binary(kind):
+        if kind.byte_width > config.ANALYST_MAX_CELL_BYTES and array.null_count < len(array):
+            raise GuardError(f"A single value in column '{column}' is larger than {config.ANALYST_MAX_CELL_BYTES:,} bytes. "
+                             "Ask for something shorter, such as a count or the first few characters.")
+    elif pa.types.is_union(kind):                                  # sparse and dense: look inside every child
+        for i in range(kind.num_fields):
+            _check_array(array.field(i), column)
     elif pa.types.is_string(kind) or pa.types.is_large_string(kind) or pa.types.is_binary(kind) or pa.types.is_large_binary(kind):
         longest = pc.max(pc.binary_length(array)).as_py() or 0          # None (all values null) counts as 0
         if longest > config.ANALYST_MAX_CELL_BYTES:
@@ -255,6 +299,19 @@ def _check_array(array: pa.Array, column: str) -> None:
     elif pa.types.is_struct(kind):
         for i in range(kind.num_fields):
             _check_array(array.field(i), column)
+
+
+def _read_batches(reader):
+    """The reader's batches. DuckDB evaluates in 2048-row vectors: an error in the first one is raised while the reader
+    is created, but an error in a later one reaches Python wrapped as an OSError while iterating. Re-raise that as the
+    duckdb.Error it is (an interrupt is left alone, run_guarded turns it into the timeout message), so every runtime
+    error is handled the same way, for example by the analyst's repair loop."""
+    try:
+        yield from reader
+    except (pa.ArrowException, OSError) as e:
+        if "interrupt" in str(e).lower():
+            raise
+        raise duckdb.Error(str(e)) from e
 
 
 def _check_batch(batch: pa.RecordBatch) -> None:
@@ -294,7 +351,7 @@ def run_guarded(con: duckdb.DuckDBPyConnection, sql: str, max_rows: int = config
         # cur.sql(...) streams. cur.execute(...).to_arrow_reader(...) would warn and copy every row first.
         reader = cur.sql(wrap_with_limit(safe, max_rows)).to_arrow_reader(config.ANALYST_BATCH_ROWS)
         batches, total_bytes = [], 0
-        for batch in reader:
+        for batch in _read_batches(reader):
             total_bytes += batch.nbytes                       # check BEFORE keeping the batch
             if total_bytes > config.ANALYST_MAX_RESULT_BYTES:
                 raise GuardError(f"The result is larger than {config.ANALYST_MAX_RESULT_BYTES / 1_000_000:g} MB. "
