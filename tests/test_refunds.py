@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from rci import db, pipeline, quality
+from rci import config, db, pipeline, quality
 
 from conftest import PROCESSED, write_frames
 
@@ -181,6 +181,126 @@ def test_the_report_adds_money_in_integer_pence_and_rounds_once():
     assert pipeline._refund_summary(three.iloc[0:0]) == {"lines": 0, "refund_pence": 0, "refund": 0.0}
 
 
+# ═════════════════════ partial refunds: dated on or after the sale, never mislabelled ═════════════════════
+def test_5b_a_refund_dated_before_the_removed_sale_is_not_classified_as_partial():
+    """A refund that predates the sale cannot be a refund of it, even with a different quantity."""
+    removed = lines(("S5", "23166", 1000, "2011-02-01 10:00", 1.04, 12346, UK))
+    returns = lines(("C5", "23166", -400, "2011-01-15 10:00", 1.04, 12346, UK))
+    assert dropped(returns, removed) == []
+    assert partial(returns, removed) == []
+
+
+def test_5c_one_removed_sale_dated_on_or_before_the_refund_is_enough_for_partial():
+    removed = lines(("S5a", "23166", 1000, "2011-02-01 10:00", 1.04, 12346, UK),      # in the refund's future: ignored
+                    ("S5b", "23166", 100, "2011-01-01 10:00", 1.04, 12346, UK))       # before the refund: eligible
+    returns = lines(("C5", "23166", -40, "2011-01-15 10:00", 1.04, 12346, UK))
+    assert partial(returns, removed) == [0]
+
+
+def test_5d_a_refund_at_the_same_moment_as_the_sale_with_a_different_quantity_is_partial():
+    removed = lines(("S5", "23166", 1000, "2011-02-01 10:00", 1.04, 12346, UK))
+    returns = lines(("C5", "23166", -400, "2011-02-01 10:00", 1.04, 12346, UK))
+    assert partial(returns, removed) == [0]
+
+
+# ═════════════════════ leftover exact refunds: reported as surplus, not partial, not silent ═════════════════════
+def surplus(returns: pd.DataFrame, removed: pd.DataFrame) -> list:
+    return list(pipeline.surplus_refunds_of_removed_sales(returns, removed))
+
+
+def test_6e_the_leftover_exact_refund_is_reported_as_surplus_and_not_as_partial():
+    """Two identical refunds, one removed sale: one is paired and dropped, the other is identical to the sale
+    but its sale is already taken. It is kept (the matching rule is unchanged) but must not go unreported."""
+    removed = lines(HUGE_SALE)
+    returns = lines(("C6a", "23166", -74215, "2011-01-18 09:00", 1.04, 12346, UK),
+                    ("C6b", "23166", -74215, "2011-01-25 09:00", 1.04, 12346, UK))
+    paired = pipeline.refunds_of_removed_sales(returns, removed)
+    assert list(paired) == [0]
+    left_over = returns.drop(index=paired)
+    assert surplus(left_over, removed) == [1]
+    assert partial(left_over, removed) == []
+
+
+def test_6f_a_refund_that_predates_the_removed_sale_is_neither_dropped_surplus_nor_partial():
+    removed = lines(("S6", "23166", 5, "2011-02-01 10:00", 1.04, 12346, UK))
+    returns = lines(("C6", "23166", -5, "2011-01-15 10:00", 1.04, 12346, UK))
+    assert dropped(returns, removed) == [] and surplus(returns, removed) == [] and partial(returns, removed) == []
+
+
+def test_6g_nothing_is_surplus_when_every_refund_was_paired():
+    removed = lines(HUGE_SALE)
+    returns = lines(("C6", "23166", -74215, "2011-01-18 09:00", 1.04, 12346, UK))
+    left_over = returns.drop(index=pipeline.refunds_of_removed_sales(returns, removed))
+    assert surplus(left_over, removed) == []
+
+
+def test_6h_a_refund_identical_except_for_the_country_is_unrelated_not_surplus():
+    removed = lines(HUGE_SALE)
+    returns = lines(("C6", "23166", -74215, "2011-01-18 09:00", 1.04, 12346, FR))
+    assert dropped(returns, removed) == [] and surplus(returns, removed) == [] and partial(returns, removed) == []
+
+
+def test_partial_and_surplus_are_disjoint_and_both_stay_in_the_data():
+    removed = lines(HUGE_SALE)
+    returns = lines(("C1", "23166", -74215, "2011-01-18 09:00", 1.04, 12346, UK),     # paired
+                    ("C2", "23166", -74215, "2011-01-19 09:00", 1.04, 12346, UK),     # leftover exact: surplus
+                    ("C3", "23166", -100, "2011-01-20 09:00", 1.04, 12346, UK))       # different quantity: partial
+    left_over = returns.drop(index=pipeline.refunds_of_removed_sales(returns, removed))
+    assert surplus(left_over, removed) == [1] and partial(left_over, removed) == [2]
+
+
+# ═════════════════════ whole-penny validation: nothing is silently rounded ═════════════════════
+SUB_PENNY = 1.044   # 104.4 pence
+
+
+def test_a_sub_penny_removed_sale_price_is_refused_and_its_label_is_named():
+    removed = lines(("S", "23166", 5, "2011-01-10 10:00", SUB_PENNY, 12346, UK), index=[7])
+    returns = lines(("C", "23166", -5, "2011-01-18 09:00", 1.04, 12346, UK))
+    with pytest.raises(ValueError) as error:
+        pipeline.refunds_of_removed_sales(returns, removed)
+    message = str(error.value)
+    assert "removed sale" in message and "line labels: 7" in message and "1.044" in message
+
+
+def test_a_sub_penny_refund_price_is_refused_and_only_the_bad_label_is_named():
+    removed = lines(HUGE_SALE)
+    returns = lines(("C1", "23166", -5, "2011-01-18 09:00", 1.04, 12346, UK),
+                    ("C2", "23166", -74215, "2011-01-18 09:00", SUB_PENNY, 12346, UK), index=[100, 205])
+    with pytest.raises(ValueError) as error:
+        pipeline.refunds_of_removed_sales(returns, removed)
+    message = str(error.value)
+    assert "refund" in message and "line labels: 205" in message and "100" not in message
+
+
+def test_the_report_summary_refuses_a_sub_penny_price_too():
+    bad = lines(("C", "23166", -5, "2011-01-18 09:00", SUB_PENNY, 12346, UK), index=[3])
+    with pytest.raises(ValueError, match=r"refund line\(s\).*line labels: 3"):
+        pipeline._refund_summary(bad)
+
+
+@pytest.mark.parametrize("name", ["refunds_of_removed_sales", "partial_refunds_of_removed_sales", "surplus_refunds_of_removed_sales"])
+def test_every_function_that_compares_prices_refuses_sub_penny_prices(name):
+    removed = lines(HUGE_SALE)
+    returns = lines(("C", "23166", -74215, "2011-01-18 09:00", SUB_PENNY, 12346, UK))
+    with pytest.raises(ValueError, match="whole number of pence"):
+        getattr(pipeline, name)(returns, removed)
+
+
+@pytest.mark.parametrize("price", [1.0000009, 0.001, 1.004, float("nan"), float("inf")])
+def test_other_non_penny_prices_are_refused_too(price):
+    removed = lines(HUGE_SALE)
+    returns = lines(("C", "23166", -74215, "2011-01-18 09:00", price, 12346, UK))
+    with pytest.raises(ValueError, match="whole number of pence"):
+        pipeline.refunds_of_removed_sales(returns, removed)
+
+
+@pytest.mark.parametrize("price", [0.01, 0.03, 1.04, 25.52, 649.5, 1157.15, 12345.67, 38970.0, 1.0400000000001, 1.0399999999999])
+def test_whole_pence_prices_and_float_noise_are_never_refused(price):
+    removed = lines(("S", "23166", 5, "2011-01-10 10:00", price, 12346, UK))
+    returns = lines(("C", "23166", -5, "2011-01-18 09:00", price, 12346, UK))
+    assert dropped(returns, removed) == [0]
+
+
 # ═════════════════════ the new quality check ═════════════════════
 def test_there_are_eleven_quality_checks():
     assert len(quality.CHECKS) == 11
@@ -259,6 +379,28 @@ def test_real_the_cleaning_report_records_exactly_these_three_refunds():
     assert notes["refunds_of_removed_sales"] == {"lines": 3, "refund_pence": 24_567_872, "refund": 245678.72,
                                                  "invoices": ["C508859", "C541433", "C581484"]}
     assert notes["partial_refunds_of_removed_sales"] == {"lines": 0, "refund_pence": 0, "refund": 0.0}
+    assert notes["surplus_refunds_of_removed_sales"] == {"lines": 0, "refund_pence": 0, "refund": 0.0}
     assert notes["returns_rows"] == 17_911
     assert len(report["steps"]) == 7                                # the refund drop is not a sales-stream step
     assert len(report["checks"]) == 11 and all(c["passed"] for c in report["checks"])
+
+
+def test_real_every_shipped_price_is_a_whole_number_of_pence(real_con):
+    """The same test the pipeline applies when matching refunds, run over everything we ship."""
+    for table in ("sales", "returns"):
+        off = real_con.cursor().execute(
+            f"SELECT COUNT(*) FROM {table} WHERE ABS(unit_price * 100 - ROUND(unit_price * 100)) > 1e-6").fetchone()[0]
+        assert off == 0, table
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not config.RAW_XLSX.exists(), reason="the raw Excel is git-ignored; run `make data` to download it")
+def test_cleaning_the_raw_excel_reproduces_the_shipped_files_and_passes_the_whole_penny_check():
+    """`clean` raises if any removed sale or any return has a sub-penny price, so reaching the assertions proves the
+    real data is clean. The output must also equal the committed returns, sales and refund notes exactly."""
+    res = pipeline.clean(pipeline.read_raw(config.RAW_XLSX))
+    pd.testing.assert_frame_equal(res.returns.astype({"quantity": "int32"}), pd.read_parquet(PROCESSED / "returns.parquet"))
+    pd.testing.assert_frame_equal(res.sales.astype({"quantity": "int32"}), pd.read_parquet(PROCESSED / "sales.parquet"))
+    committed = json.loads((PROCESSED / "cleaning_report.json").read_text())["summary"]
+    for key in ("refunds_of_removed_sales", "partial_refunds_of_removed_sales", "surplus_refunds_of_removed_sales"):
+        assert res.notes[key] == committed[key], key

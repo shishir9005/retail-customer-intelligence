@@ -62,6 +62,11 @@
       "refund_pence": 0,
       "refund": 0.0
     },
+    "surplus_refunds_of_removed_sales": {
+      "lines": 0,
+      "refund_pence": 0,
+      "refund": 0.0
+    },
     "guest_line_share": 0.2259372853835013,
     "guest_revenue_share": 0.13281467982933928,
     "customers": 5852,

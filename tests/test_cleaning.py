@@ -1,6 +1,7 @@
 """Each cleaning rule is tested on a row built to trigger exactly that rule."""
 import numpy as np
 import pandas as pd
+import pytest
 
 from rci import pipeline
 
@@ -129,3 +130,76 @@ def test_rule_one_explanation_describes_the_overlap_without_hard_coded_counts():
     why = pipeline.clean(raw_frame()).steps[0]["why"]
     assert "overlapping" in why and "inside one invoice" in why
     assert not any(ch.isdigit() for ch in why.replace("1-9 Dec 2010", ""))
+
+
+# ── a GUEST refund, end to end through clean() ───────────────────────────────
+def raw_with_guest_refunds():
+    """raw_frame() plus a removed GUEST sale (a £400 price typo, rule 6) and three refunds:
+      C1021  the guest's exact refund of that sale                                -> dropped
+      C1022  a guest refund at £500, the price of CUSTOMER 2's removed sale 1011   -> stays (a guest never takes a customer's sale)
+      C1023  customer 2's refund at £400, the price of the GUEST's removed sale    -> stays (a customer never takes a guest's sale)
+    """
+    base = raw_frame()
+    name = "REGENCY CAKESTAND 3 TIER"
+    sold, refunded = "2011-01-05 10:00", "2011-01-06 09:00"
+    extra = pd.DataFrame([
+        ("1020", "22423", name, 1, sold, 400.0, None, "France"),
+        ("C1021", "22423", name, -1, refunded, 400.0, None, "France"),
+        ("C1022", "22423", name, -1, refunded, 500.0, None, "France"),
+        ("C1023", "22423", name, -1, refunded, 400.0, 2.0, "France"),
+    ], columns=base.columns).assign(InvoiceDate=lambda x: pd.to_datetime(x["InvoiceDate"]))
+    return pd.concat([base, extra], ignore_index=True)
+
+
+def test_a_guest_refund_exactly_reversing_a_removed_guest_sale_is_dropped_by_clean():
+    res = pipeline.clean(raw_with_guest_refunds())
+    assert "C1021" not in set(res.returns["invoice"])
+    assert res.notes["refunds_of_removed_sales"] == {"lines": 1, "refund_pence": 40_000, "refund": 400.0, "invoices": ["C1021"]}
+
+
+def test_a_guest_refund_never_takes_an_identified_customers_removed_sale_through_clean():
+    res = pipeline.clean(raw_with_guest_refunds())
+    kept = res.returns[res.returns["invoice"] == "C1022"]
+    assert len(kept) == 1 and kept["customer_id"].isna().all()
+
+
+def test_an_identified_refund_never_takes_a_guests_removed_sale_through_clean():
+    res = pipeline.clean(raw_with_guest_refunds())
+    kept = res.returns[res.returns["invoice"] == "C1023"]
+    assert len(kept) == 1 and kept["customer_id"].tolist() == [2]
+
+
+def test_guest_refund_handling_leaves_the_sales_stream_and_the_other_categories_alone():
+    res = pipeline.clean(raw_with_guest_refunds())
+    assert sorted(res.returns["invoice"]) == ["C1006", "C1022", "C1023"]
+    pd.testing.assert_frame_equal(res.sales, pipeline.clean(raw_frame()).sales)       # the guest sale was removed by rule 6
+    assert res.notes["partial_refunds_of_removed_sales"]["lines"] == 0
+    assert res.notes["surplus_refunds_of_removed_sales"]["lines"] == 0
+
+
+# ── the leftover exact refund, end to end ────────────────────────────────────
+def raw_with_a_surplus_refund():
+    """raw_frame() plus TWO identical exact refunds of the one removed 60,000-unit sale 1012."""
+    base = raw_frame()
+    name = "WHITE HANGING HEART T-LIGHT HOLDER"
+    extra = pd.DataFrame([
+        ("C1030", "85123A", name, -60000, "2011-01-06 09:00", 3.0, 4.0, "United Kingdom"),
+        ("C1031", "85123A", name, -60000, "2011-01-07 09:00", 3.0, 4.0, "United Kingdom"),
+    ], columns=base.columns).assign(InvoiceDate=lambda x: pd.to_datetime(x["InvoiceDate"]))
+    return pd.concat([base, extra], ignore_index=True)
+
+
+def test_the_second_identical_refund_is_kept_and_reported_as_surplus():
+    res = pipeline.clean(raw_with_a_surplus_refund())
+    assert sorted(res.returns["invoice"]) == ["C1006", "C1031"]       # C1030 was paired with the sale; C1031 is left over
+    assert res.notes["refunds_of_removed_sales"]["invoices"] == ["C1030"]
+    assert res.notes["surplus_refunds_of_removed_sales"] == {"lines": 1, "refund_pence": 18_000_000, "refund": 180000.0}
+    assert res.notes["partial_refunds_of_removed_sales"]["lines"] == 0
+
+
+def test_a_sub_penny_price_on_a_removed_sale_stops_cleaning_with_a_clear_error():
+    base = raw_frame()
+    sub_penny = pd.DataFrame([("1040", "22423", "REGENCY CAKESTAND 3 TIER", 1, "2011-01-05 10:00", 500.004, 2.0, "France")],
+                             columns=base.columns).assign(InvoiceDate=lambda x: pd.to_datetime(x["InvoiceDate"]))
+    with pytest.raises(ValueError, match="not a whole number of pence"):
+        pipeline.clean(pd.concat([base, sub_penny], ignore_index=True))      # removed by rule 6 (>20x the median), so it is checked
