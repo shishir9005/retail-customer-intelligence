@@ -132,6 +132,7 @@ def test_the_model_page_shows_the_backtest_and_labels_the_mlp_as_latest_quarter_
     assert "Three-quarter backtest (MLP not included)" in [s.value for s in at.subheader]
     text = " ".join(e.value for group in (at.markdown, at.caption, at.info, at.success, at.warning) for e in group)
     assert "the gain is real" not in text and "excludes zero" not in text
+    assert "one test period" not in text
     tables = [d.value for d in at.dataframe]
     main = next(t for t in tables if "PyTorch MLP" in t.to_string())
     mlp_row = main[main["Model"] == "PyTorch MLP"].to_string()

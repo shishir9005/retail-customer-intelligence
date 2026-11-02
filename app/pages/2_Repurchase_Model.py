@@ -223,6 +223,6 @@ with st.expander("Interview notes: why these choices?"):
   rule, a logistic regression on recency and frequency alone, and the full logistic regression.
 - **{gbm} and the neural network.** {mlp_note}
 - **Gradient boosting library:** this run used **{gbm}**{gbm_note}.
-- **Caveats:** one test period; it includes the Christmas peak; brand-new customers (no history) are not scored.
+- **Caveats:** the main table is one test quarter (Sep–Dec 2011), which includes the Christmas peak; the backtest adds two earlier quarters; brand-new customers (no history) are not scored.
         """
     )
