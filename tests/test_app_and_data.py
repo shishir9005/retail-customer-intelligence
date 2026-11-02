@@ -6,6 +6,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -217,6 +218,20 @@ def test_the_model_page_shows_the_backtest_and_labels_the_mlp_as_latest_quarter_
     assert "latest quarter only" not in main[main["Model"] == "Logistic regression"].to_string()
     backtest = next(t for t in tables if "2011-03" in t.to_string() and "PyTorch MLP" not in t.to_string())
     assert {"2011-03", "2011-06", "2011-09", "Mean"} <= set(backtest.columns)
+
+
+def test_who_to_contact_shows_probabilities_as_percentages(monkeypatch):
+    """The scores are stored as 0-1 probabilities. Printing 0.96 with '%.0f%%' gave '1%' for every customer, so the shown
+    value, the column's format and its scale must together print 96%, with the bar still filling 96% of its width."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    at = AppTest.from_file(str(APP / "pages" / "2_Repurchase_Model.py"), default_timeout=120).run()
+    at.radio[0].set_value("Most likely to buy again").run()
+    frame = next(d for d in at.dataframe if "P(buys in 90 days)" in d.value.columns)
+    column = json.loads(frame.proto.columns)["P(buys in 90 days)"]["type_config"]
+    top = pd.read_parquet(PROCESSED / "current_scores.parquet")["p_repurchase_90d"].max()      # the stored prediction
+    shown = frame.value["P(buys in 90 days)"].iloc[0]
+    assert column["format"] % shown == f"{round(top * 100):.0f}%"                               # "96%", not "1%"
+    assert shown / column["max_value"] == pytest.approx(top, abs=1e-4) and column["min_value"] == 0   # the bar fills the same share
 
 
 # ── the README results blocks are generated, never typed ─────────────────────

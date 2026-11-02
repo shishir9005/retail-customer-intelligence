@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 P = ROOT / "data" / "processed"
 LATEST = "Sep–Dec 2011"                                  # the latest test quarter (the main table)
 COUNTRY_NOTE = "country labels (about 40 countries; includes Unspecified and European Community)"
-CI_HAS_RUN = False        # set True only after a real CI run on GitHub; until then the docs say "configured"
+CI_PASSING = True         # True while the latest GitHub Actions run on main is green (first green run: 2026-11-02, commit 782bbb4); False -> "configured"
 
 
 def load(name: str) -> dict:
@@ -92,8 +92,8 @@ def build() -> dict:
     only_latest = set(met.get("latest_quarter_only", []))
     latest_label = met.get("latest_quarter_label", "latest quarter only")
     n_tests, n_funcs = count_tests(), count_test_functions()
-    ci_en = "CI runs in GitHub Actions" if CI_HAS_RUN else "CI is configured in `.github/workflows/ci.yml`"
-    ci_zh = "已在 GitHub Actions 上持续集成" if CI_HAS_RUN else "持续集成已配置在 `.github/workflows/ci.yml`"
+    ci_en = "CI passes in GitHub Actions" if CI_PASSING else "CI is configured in `.github/workflows/ci.yml`"
+    ci_zh = "GitHub Actions 持续集成通过" if CI_PASSING else "持续集成已配置在 `.github/workflows/ci.yml`"
     ref = s["refunds_of_removed_sales"]
     refunds = f"{ref['lines']} refund{'s' if ref['lines'] != 1 else ''} of deleted sale lines removed (£{ref['refund']:,.2f})"
     lr_mean, gb_mean, rec_mean = bt["mean"]["Logistic regression"], bt["mean"][gbm], bt["mean"]["Recency rule"]
@@ -193,7 +193,7 @@ On the backtest, {backtest_summary(met)}. {backtest_verdict(met)} Contacting the
 {cap} of all returning customers (a random list reaches 20%), and {pct(best['top20_precision']['value'], 0)} of those contacted do \
 return, against {pct(met['base_rate_test'], 0)} overall. The PyTorch MLP is trained for the latest quarter only: it is not part of the \
 backtest and is never compared with its means.{
-    '' if met['lightgbm_used'] else ' This run used scikit-learn HistGradientBoosting because LightGBM could not load (macOS needs `brew install libomp`); the code switches to LightGBM automatically when it can.'}
+    '' if met['lightgbm_used'] else ' The reported scores come from scikit-learn HistGradientBoosting: the offline training run could not load LightGBM (macOS needs `brew install libomp`), and `model.py` uses LightGBM automatically when it can. The hosted app trains nothing and loads no model: it only displays the saved results.'}
 
 ### AI analyst
 
@@ -231,16 +231,16 @@ Fill the `[X]` placeholders in `CV_Common_Draft.md` with these, copied exactly a
 | Analyst accuracy `[X] of [N]` (dev + held-out) | {f"{ev['n_correct']} of {ev['n_questions']} ({ev['n_executed']} returned a table)" if ev else 'not run'}; runs so far: {', '.join(analyst_runs())} | analyst_eval.json, evals/history/ |
 | Analyst exploratory set (own line) | {f"{ev['by_set']['exploratory']['correct']} of {ev['by_set']['exploratory']['total']}" if ev and 'exploratory' in ev['by_set'] else 'not run'} | analyst_eval.json |
 | Analyst safety and guard cases | {f"safety {ev['safety_handled']} of {ev['safety_total']} (refused by the model {ev['safety_refused_by_model']}, blocked by the guard {ev['safety_blocked_by_guard']}, other failure {ev['safety_failed_other']}); guard cases {ev['guard_cases_blocked']} of {ev['guard_cases_total']}" if ev else 'not run'} | analyst_eval.json |
-| Tests `[N]` | {n_tests} test cases ({n_funcs} test functions); {ci_en}{'' if CI_HAS_RUN else ' (no real CI run yet)'} | pytest --collect-only, tests/ |
+| Tests `[N]` | {n_tests} test cases ({n_funcs} test functions); {ci_en}{'' if CI_PASSING else ' (no real CI run yet)'} | pytest --collect-only, tests/ |
 
 ## Wording that is true as measured
 
 - CV bullet 3, copy exactly: {bullet3}
-{"" if met['lightgbm_used'] else chr(10) + "- **Important:** this run used scikit-learn `HistGradientBoostingClassifier`, not LightGBM (LightGBM could not load without `libomp`). Write 'gradient boosting (scikit-learn)' on the CV, never 'LightGBM'." + chr(10)}
+{"" if met['lightgbm_used'] else chr(10) + "- **Important:** the training run used scikit-learn `HistGradientBoostingClassifier`, not LightGBM (LightGBM could not load on the training Mac without `libomp`; the hosted app trains no model). Write 'gradient boosting (scikit-learn)' on the CV, never 'LightGBM'." + chr(10)}
 - On the backtest, {backtest_summary(met)}. {backtest_verdict(met)} Do not write that the model is 'highly accurate'{'' if gbm_advantage(met) == 'gbm' else " or that gradient boosting beats logistic regression"}: the simple recency rule averages {rec_mean:.3f} and is already strong.
 - The PyTorch MLP ({mlp:.3f}) is {latest_label}: never average it with, or rank it against, the backtest means.
 - Analyst: {f"{ev['n_correct']} of {ev['n_questions']} on the headline questions; " if ev else ''}say "about 90%" or give the range across runs ({', '.join(analyst_runs())}), not just the best run: the LLM varies slightly between runs. The exploratory set is its own line, never merged into the headline.
-- Tests: write "{n_tests} test cases" and {'"CI runs in GitHub Actions"' if CI_HAS_RUN else '"CI configured in .github/workflows/ci.yml" (the repository has not run on GitHub yet; say "tests run in GitHub Actions" only after a real CI run)'}.
+- Tests: write "{n_tests} test cases" and {'"CI passes in GitHub Actions"' if CI_PASSING else '"CI configured in .github/workflows/ci.yml" (the repository has not run on GitHub yet; say "tests run in GitHub Actions" only after a real CI run)'}.
 """
     return {"en": block_en, "zh": block_zh, "cv": cv}
 

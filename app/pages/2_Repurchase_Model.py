@@ -191,9 +191,10 @@ if tbl is not None:
     show = tbl.head(n_rows).rename(columns={
         "customer_id": "Customer", "segment": "Segment", "country": "Country", "orders": "Orders",
         "monetary": "Lifetime spend (£)", "recency_days": "Days since last order", "p_repurchase_90d": "P(buys in 90 days)"})
+    show["P(buys in 90 days)"] = show["P(buys in 90 days)"] * 100       # shown as 0-100 so that "%.0f%%" prints 96%, not 1%
     st.dataframe(show[["Customer", "Segment", "Country", "Orders", "Lifetime spend (£)", "Days since last order", "P(buys in 90 days)"]],
                  hide_index=True,
-                 column_config={"P(buys in 90 days)": st.column_config.ProgressColumn(min_value=0, max_value=1, format="%.0f%%"),
+                 column_config={"P(buys in 90 days)": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%"),
                                 "Lifetime spend (£)": st.column_config.NumberColumn(format="£%.0f")})
     st.caption(note + " Scores are as of 10 Dec 2011, the day after the data ends. Use them to rank customers: the absolute "
                "percentages depend on the season (the test window includes Christmas).")
@@ -209,8 +210,8 @@ else:
     mlp_note = "The neural network was skipped on this machine (PyTorch is not installed), so only the other scorers are compared."
 
 gbm_note = "" if m["lightgbm_used"] else (
-    " (LightGBM was not available on this machine, so scikit-learn's HistGradientBoosting, "
-    "the same algorithm family, was used)")
+    " (the training run could not load LightGBM, which `model.py` prefers, so it used scikit-learn's HistGradientBoosting, "
+    "the same algorithm family; this app only displays the saved results and trains or loads no model)")
 
 with st.expander("Interview notes: why these choices?"):
     st.markdown(
@@ -222,7 +223,7 @@ with st.expander("Interview notes: why these choices?"):
 - **Baselines first.** A model only matters if it beats something simple: here the one-line recency rule, the recent-orders
   rule, a logistic regression on recency and frequency alone, and the full logistic regression.
 - **{gbm} and the neural network.** {mlp_note}
-- **Gradient boosting library:** this run used **{gbm}**{gbm_note}.
+- **Gradient boosting library:** the reported scores come from **{gbm}**{gbm_note}.
 - **Caveats:** the main table is one test quarter (Sep–Dec 2011), which includes the Christmas peak; the backtest adds two earlier quarters; brand-new customers (no history) are not scored.
         """
     )

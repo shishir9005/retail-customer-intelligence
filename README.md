@@ -1,5 +1,7 @@
 # Retail Customer Intelligence + AI Data Analyst
 
+[![CI](https://github.com/shishir9005/retail-customer-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/shishir9005/retail-customer-intelligence/actions/workflows/ci.yml) **Live demo:** https://shishir-retail-intelligence.streamlit.app/ (Streamlit Community Cloud)
+
 Analytics a retail data team would build, on **1M+ order lines (~40k orders)** from a UK online gift shop (UCI Online Retail II, 2009-2011, 43 country labels: about 40 countries, including Unspecified and European Community):
 a tested cleaning pipeline, SQL analytics in a dashboard, customer segments, a model that predicts who will buy again in the next 90 days,
 product categories from sentence embeddings, and an **AI analyst that turns plain-English questions into SQL** behind a read-only guard.
@@ -58,7 +60,7 @@ Revenue shares are of identified customers' revenue. The last column is leak-fre
 | HistGradientBoosting | 0.759 | 0.802 | 0.796 | 0.786 |
 | HistGradientBoosting minus logistic regression | -0.014 | -0.006 | +0.008 | -0.004 |
 
-On the backtest, logistic regression averages 0.790 ROC-AUC and HistGradientBoosting 0.786; HistGradientBoosting minus logistic regression is -0.014, -0.006, +0.008 by quarter. The two perform about the same: neither is ahead in every quarter, and the average difference is -0.004 ROC-AUC. Contacting the top 20% by HistGradientBoosting score in the latest quarter reaches 39% of all returning customers (a random list reaches 20%), and 85% of those contacted do return, against 43% overall. The PyTorch MLP is trained for the latest quarter only: it is not part of the backtest and is never compared with its means. This run used scikit-learn HistGradientBoosting because LightGBM could not load (macOS needs `brew install libomp`); the code switches to LightGBM automatically when it can.
+On the backtest, logistic regression averages 0.790 ROC-AUC and HistGradientBoosting 0.786; HistGradientBoosting minus logistic regression is -0.014, -0.006, +0.008 by quarter. The two perform about the same: neither is ahead in every quarter, and the average difference is -0.004 ROC-AUC. Contacting the top 20% by HistGradientBoosting score in the latest quarter reaches 39% of all returning customers (a random list reaches 20%), and 85% of those contacted do return, against 43% overall. The PyTorch MLP is trained for the latest quarter only: it is not part of the backtest and is never compared with its means. The reported scores come from scikit-learn HistGradientBoosting: the offline training run could not load LightGBM (macOS needs `brew install libomp`), and `model.py` uses LightGBM automatically when it can. The hosted app trains nothing and loads no model: it only displays the saved results.
 
 ### AI analyst
 
@@ -69,7 +71,7 @@ Exploratory set, reported on its own line and not part of the headline: 9/10 cor
 Safety cases handled 3/3 (refused by the model 3, blocked by the guard 0, other failure 0). Guard cases: 15/15 raw attack queries, run through the guard with no LLM, were refused with the expected message.
 
 Runs so far, oldest first: 19/22, 27/30, 29/30, 28/30, 28/30. The first run used 22 questions and an unrefined prompt (two failures were the model reading 'revenue' as net of returns instead of gross; the fix was to state the metric definitions in the prompt). The last run is scored with the stricter comparison. The model is not perfectly repeatable even at temperature 0, so quote the range, not the best run. The saved runs are in `evals/history/`.
-Test suite: 651 test cases (245 test functions); CI is configured in `.github/workflows/ci.yml`.
+Test suite: 652 test cases (246 test functions); CI passes in GitHub Actions.
 
 <!-- RESULTS:END -->
 
@@ -131,13 +133,18 @@ The cleaned Parquet files are committed, so `make app` works straight after clon
 The raw 45 MB Excel file is downloaded by the pipeline and never committed.
 
 macOS note: LightGBM needs the OpenMP runtime (`brew install libomp`). Without it `model.py` automatically uses scikit-learn's
-`HistGradientBoostingClassifier` (same algorithm family) and the results above say which one ran.
+`HistGradientBoostingClassifier` (same algorithm family). The reported results were trained locally without it, so they come from
+HistGradientBoosting (the results above say which one ran). The hosted app trains nothing and loads no model, it only displays the
+saved results, so LightGBM is not a deployment dependency (it is listed in `requirements-train.txt` only).
 
 ### Deploy (Streamlit Community Cloud, free)
 
 1. Push the repository to GitHub (keep `data/processed/`, which is small).
-2. share.streamlit.io, New app, main file `app/Overview.py`.
-3. In Advanced settings, Secrets, add `GROQ_API_KEY = "..."`. Without it the app still works; only live questions in "Ask the Data" are disabled.
+2. At share.streamlit.io click **Create app**, then **Yup, I have an app**. Choose the repository, branch `main` and main file `app/Overview.py`.
+3. In Advanced settings choose Python 3.12 (the version CI uses). Community Cloud installs `requirements.txt` only; `requirements-dev.txt` and `requirements-train.txt` are for the tests and offline training.
+4. Optional: in Advanced settings, Secrets, add `GROQ_API_KEY = "..."`. Without it the app still works; only live questions in "Ask the Data" are disabled.
+
+The live demo above was deployed this way.
 
 The analyst is protected from visitors burning the free quota: identical questions are cached, each session gets 15 questions, and the whole app is limited to 40 per hour.
 A `Dockerfile` is included (`docker build -t rci . && docker run -p 8501:8501 -e GROQ_API_KEY=... rci`); it has not been built in the environment this was developed in.
@@ -158,7 +165,7 @@ data/processed/ cleaned Parquet + JSON results (committed, about 10 MB)
 
 ## Testing and CI
 
-`pytest` is configured to run on every push in GitHub Actions (`.github/workflows/ci.yml`; Python 3.12, no PyTorch needed); the repository has not run on GitHub yet. The tests that matter most:
+`pytest` runs on every push and pull request in GitHub Actions (`.github/workflows/ci.yml`; Python 3.12, no PyTorch needed), and the CI is passing. The tests that matter most:
 
 - **No leakage** (`tests/test_leakage.py`, on the real data): for all six cutoffs the features are rebuilt from a database with every later row deleted and must match; the SQL features are re-derived independently in pandas; the feature SQL may only read `sales` and `returns`; scalers see training rows only; segments are refitted from earlier data only before being validated; labels whose 90-day window is not fully observed are refused instead of cast to integers. A toy version of the first check lives in `tests/test_no_leakage.py`. Deliberately injecting a leak into each of these places makes the matching test fail.
 - **SQL guard**: attack queries that must be refused (DROP, COPY, ATTACH, `read_csv`, two statements, unknown tables, a WITH name that hides a system view, huge aggregates, recursive WITH, oversized results, slow queries, a locked connection) and legitimate queries that must still run, with results checked against the plain `.df()` path. The evaluation file also holds raw attack queries that must be refused with the expected message.
@@ -218,7 +225,7 @@ data/processed/ cleaned Parquet + JSON results (committed, about 10 MB)
 - **客户分群**：RFM + KMeans，k = 4；Champions 群占 20% 的客户，贡献 74% 的收入。
 - **90 天复购预测**：按时间切分（不随机切分，并有防泄漏测试），并做了三个季度的回测（不含 MLP）：逻辑回归和 HistGradientBoosting 的平均 ROC-AUC 分别为 0.790 和 0.786（两者表现相近，没有谁在每个季度都领先）；在最新季度（2011 年 9–12 月），按分数排名前 20% 的客户覆盖 39% 的回购客户（随机选只有 20%）。PyTorch MLP 仅最新季度训练（ROC-AUC 0.794），不参与回测。
 - **AI 数据分析师**：用自然语言提问，LLM 生成 SQL，经过只读 SQL 防护后在 DuckDB 执行；在 30 道评测题（开发集 + 留出集）上 28 道正确，执行准确率 93%（30 道返回了结果表）；另有 10 道探索性题目单独统计（9/10 正确），不计入上述数字；安全用例 3/3；15/15 个防护用例（直接攻击 SQL，不经过 LLM）被拦截。
-- **工程化**：651 个测试用例（245 个测试函数）；持续集成已配置在 `.github/workflows/ci.yml`。
+- **工程化**：652 个测试用例（246 个测试函数）；GitHub Actions 持续集成通过。
 
 <!-- RESULTS_ZH:END -->
 

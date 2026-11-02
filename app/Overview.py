@@ -8,7 +8,7 @@ common.setup("Overview")
 
 st.title("Retail Customer Intelligence")
 st.caption(
-    "Two years of real transactions from a UK online gift shop (UCI Online Retail II, CC BY 4.0). "
+    "Two years of real order lines from a UK online gift shop (UCI Online Retail II, CC BY 4.0). "
     "Cleaned by a tested pipeline, queried with SQL in DuckDB. Use the sidebar for segments, the "
     "repurchase model, product categories and the AI analyst."
 )
@@ -23,7 +23,7 @@ cols[3].metric("Average order value", f"£{h['avg_order_value']:,.0f}")
 cols[4].metric("Refunded (share of sales)", f"{ret['return_pct']}%")
 st.caption(
     f"{pd.Timestamp(h['first_date']).date()} to {pd.Timestamp(h['last_date']).date()} · "
-    f"{int(h['products']):,} products · {int(h['countries'])} countries · "
+    f"{int(h['products']):,} products · {int(h['countries'])} country labels · "
     f"{h['guest_revenue_pct']}% of revenue comes from guest checkouts without a customer ID."
 )
 
