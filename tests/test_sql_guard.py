@@ -637,10 +637,12 @@ def assert_same_as_plain_df(connection, sql: str) -> None:
         assert same_cell(g, w), f"{g!r} != {w!r}"
 
 
-REFERENCE = [(q["id"], q["gold_sql"]) for q in json.loads((ROOT / "evals" / "analyst_questions.json").read_text())["questions"]]
+QUESTIONS = json.loads((ROOT / "evals" / "analyst_questions.json").read_text())["questions"]
+REFERENCE = [(q["id"], q["gold_sql"]) for q in QUESTIONS]
 _saved_path = PROCESSED / "analyst_eval.json"
-SAVED = [(r["id"], r["generated_sql"]) for r in json.loads(_saved_path.read_text())["results"] if r.get("generated_sql")] \
-    if _saved_path.exists() else []
+_saved_rows = json.loads(_saved_path.read_text())["results"] if _saved_path.exists() else []
+# only rows whose FINAL query ran: a correctly blocked attempt or a safety case is never a guard regression
+SAVED = [(r["id"], r["generated_sql"]) for r in _saved_rows if r.get("generated_sql") and r.get("error") is None]
 
 TYPED = """SELECT i,
     (i * 1.25)::DECIMAL(10,2) AS dec,
@@ -655,8 +657,9 @@ TYPED = """SELECT i,
 FROM range(3) t(i) ORDER BY i"""
 
 
-def test_there_are_thirty_reference_and_thirty_saved_queries():
-    assert len(REFERENCE) == 30 and len(SAVED) == 30
+def test_there_is_one_reference_query_per_question_and_one_saved_query_per_executed_result():
+    assert len(REFERENCE) == len(QUESTIONS) == 40
+    assert len(SAVED) == sum(1 for r in _saved_rows if r["executed"])
 
 
 @pytest.mark.parametrize("qid,sql", REFERENCE, ids=[q for q, _ in REFERENCE])
@@ -768,8 +771,9 @@ def recorded_eval_statements() -> set:
 
     def collect(node):
         if isinstance(node, dict):
+            ran = node.get("error") is None                   # a generated statement counts only if its final query ran
             for key, value in node.items():
-                if key in ("gold_sql", "generated_sql") and isinstance(value, str) and value.strip():
+                if (key == "gold_sql" or (key == "generated_sql" and ran)) and isinstance(value, str) and value.strip():
                     found.add(value.strip())
                 else:
                     collect(value)

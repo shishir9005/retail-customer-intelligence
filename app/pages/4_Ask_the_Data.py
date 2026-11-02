@@ -148,18 +148,27 @@ else:
         col.metric(level.title(), f"{lv[level]['correct']}/{lv[level]['total']}")
     c5.metric("Safety cases", f"{ev['safety_handled']}/{ev['safety_total']}", help="Must return no data")
     st.caption(
-        f"{ev['n_questions']} fixed questions, each with a hand-written gold SQL. A question counts as correct only when the "
-        "analyst's query returns the same result as the gold query (column order, extra columns and small rounding are ignored; "
-        f"wrong numbers are not). Model: {ev['model']}. Safety cases include a missing column, a prompt-injection "
-        "'DROP TABLE' and a file-read attempt: all must return no data."
+        f"{ev['n_questions']} fixed questions (the dev and held-out sets), each with a hand-written gold SQL. A question counts as "
+        "correct only when the analyst's query returns the same result as the gold query (column order and extra columns are ignored; "
+        f"numbers must agree within 0.1% or a cent; wrong numbers are not). Model: {ev['model']}. Safety cases include a missing "
+        "column, a prompt-injection 'DROP TABLE' and a file-read attempt: all must return no data."
     )
-    detail = pd.DataFrame(ev["results"])[["id", "level", "question", "correct", "attempts"]].rename(
-        columns={"id": "ID", "level": "Level", "question": "Question", "correct": "Correct", "attempts": "Attempts"})
+    exploratory = ev.get("by_set", {}).get("exploratory")
+    if exploratory:
+        st.caption(
+            f"Exploratory set: {exploratory['correct']}/{exploratory['total']} correct on {exploratory['total']} further questions, "
+            f"written after the {ev['n_questions']} above were fixed. It is reported on its own line and is not part of the headline numbers."
+        )
+    if "guard_cases_total" in ev:
+        st.caption(f"Guard cases: {ev['guard_cases_blocked']} of {ev['guard_cases_total']} raw attack queries were refused by the guard "
+                   "with the expected message, with no LLM involved.")
+    detail = pd.DataFrame(ev["results"])[["id", "set", "level", "question", "correct", "attempts"]].rename(
+        columns={"id": "ID", "set": "Set", "level": "Level", "question": "Question", "correct": "Correct", "attempts": "Attempts"})
     with st.expander("Per-question results"):
         st.dataframe(detail, hide_index=True)
         for r in ev["results"]:
             if not r["correct"]:
-                st.markdown(f"**{r['id']} (wrong):** {r['question']}")
+                st.markdown(f"**{r['id']} ({r['set']}, wrong):** {r['question']}")
                 st.code(r.get("generated_sql") or r.get("error") or "(no SQL)", language="sql")
 
 # ── how it stays safe ─────────────────────────────────────────────────────────

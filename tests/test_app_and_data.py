@@ -1,6 +1,8 @@
 """Smoke tests: every page renders without an exception, and the eval set stays valid on the real data."""
+import hashlib
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -71,6 +73,7 @@ def test_ask_page_without_a_key_explains_instead_of_failing(monkeypatch):
 
 # ── the evaluation set ───────────────────────────────────────────────────────
 QUESTIONS = json.loads((ROOT / "evals" / "analyst_questions.json").read_text())
+FROZEN_GOLD_SHA256 = "7c7418b71790c45ae3104c25a3c684d13c82729b33e5f917fd03667d841077d4"
 
 
 @pytest.mark.parametrize("q", QUESTIONS["questions"], ids=lambda q: q["id"])
@@ -80,9 +83,20 @@ def test_gold_sql_is_valid_and_returns_rows(q, real_con):
 
 
 def test_eval_ids_are_unique_and_levels_are_known():
-    ids = [q["id"] for q in QUESTIONS["questions"] + QUESTIONS["safety_cases"]]
+    ids = [q["id"] for q in QUESTIONS["questions"] + QUESTIONS["safety_cases"] + QUESTIONS["guard_cases"]]
     assert len(ids) == len(set(ids))
     assert {q["level"] for q in QUESTIONS["questions"]} == {"easy", "medium", "hard"}
+    assert Counter(q["set"] for q in QUESTIONS["questions"]) == {"dev": 22, "heldout": 8, "exploratory": 10}
+
+
+def test_the_gold_sql_is_frozen():
+    """The questions and gold SQL were fixed before the live run. Changing any of them changes this hash: do it only
+    if a gold SQL is wrong, re-score the saved SQL offline, and say so in the commit message."""
+    frozen = json.dumps([[q["id"], q["question"], q["gold_sql"]] for q in QUESTIONS["questions"]])
+    assert hashlib.sha256(frozen.encode()).hexdigest() == FROZEN_GOLD_SHA256
+
+
+HEADLINE_SETS = ("dev", "heldout")
 
 
 def test_saved_eval_report_is_consistent():
@@ -90,9 +104,66 @@ def test_saved_eval_report_is_consistent():
     if not path.exists():
         pytest.skip("analyst eval not run")
     rep = json.loads(path.read_text())
-    assert rep["n_questions"] == len(QUESTIONS["questions"]) == len(rep["results"])
-    assert rep["n_correct"] == sum(r["correct"] for r in rep["results"])
+    rows = rep["results"]
+    headline = [r for r in rows if r["set"] in HEADLINE_SETS]
+    assert [r["id"] for r in rows] == [q["id"] for q in QUESTIONS["questions"]] and len(rows) == 40
+    assert {r["set"] for r in rows} == {"dev", "heldout", "exploratory"}
+
+    # the headline is the dev + held-out questions only; the exploratory set never enters it
+    assert rep["n_questions"] == len(headline) == 30
+    assert rep["n_executed"] == sum(r["executed"] for r in headline)
+    assert rep["n_correct"] == sum(r["correct"] for r in headline)
+    assert rep["n_correct"] <= rep["n_executed"] <= rep["n_questions"]
     assert rep["accuracy"] == pytest.approx(rep["n_correct"] / rep["n_questions"], abs=1e-3)
+    for level, v in rep["by_level"].items():
+        in_level = [r for r in headline if r["level"] == level]
+        assert (v["correct"], v["total"]) == (sum(r["correct"] for r in in_level), len(in_level))
+    assert sum(v["total"] for v in rep["by_level"].values()) == rep["n_questions"]
+
+    # one breakdown per set present, covering every row exactly once
+    assert set(rep["by_set"]) == {"dev", "heldout", "exploratory"}
+    for name, v in rep["by_set"].items():
+        in_set = [r for r in rows if r["set"] == name]
+        assert v == {"correct": sum(r["correct"] for r in in_set), "executed": sum(r["executed"] for r in in_set), "total": len(in_set)}
+        assert v["correct"] <= v["executed"] <= v["total"]
+    assert sum(v["total"] for v in rep["by_set"].values()) == len(rows)
+    assert sum(rep["by_set"][s]["total"] for s in HEADLINE_SETS) == rep["n_questions"]
+    for r in rows:
+        assert not r["correct"] or r["executed"]
+        assert not r["executed"] or (r["error"] is None and r["generated_sql"])
+
+    # safety: mutually exclusive buckets that add up to "handled"
+    safety = rep["safety"]
+    assert rep["safety_total"] == len(safety) == len(QUESTIONS["safety_cases"])
+    assert rep["safety_handled"] == sum(r["handled"] for r in safety)
+    assert (rep["safety_refused_by_model"], rep["safety_blocked_by_guard"], rep["safety_failed_other"]) == tuple(
+        sum(r["bucket"] == b for r in safety) for b in ("refused_by_model", "blocked_by_guard", "failed_other"))
+    assert rep["safety_refused_by_model"] + rep["safety_blocked_by_guard"] + rep["safety_failed_other"] == rep["safety_handled"]
+    assert all(r["handled"] == (r["bucket"] != "leaked") for r in safety)
+
+    # guard cases: raw attack SQL, no LLM
+    assert rep["guard_cases_total"] == len(rep["guard_cases"]) == len(QUESTIONS["guard_cases"])
+    assert rep["guard_cases_blocked"] == sum(c["blocked"] for c in rep["guard_cases"])
+
+
+def test_the_ask_page_reports_the_exploratory_set_on_its_own_line(monkeypatch):
+    path = PROCESSED / "analyst_eval.json"
+    if not path.exists():
+        pytest.skip("analyst eval not run")
+    rep = json.loads(path.read_text())
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setenv("RCI_ENV_FILE", "/nonexistent")
+    at = AppTest.from_file(str(APP / "pages" / "4_Ask_the_Data.py"), default_timeout=120).run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.metric[0].label == "Execution accuracy" and at.metric[0].value == f"{rep['accuracy']:.0%}"      # the 30-question headline
+    assert at.metric[0].help == f"{rep['n_correct']} of {rep['n_questions']} questions"
+    table = next(d.value for d in at.dataframe if "Set" in d.value.columns)
+    assert len(table) == 40 and set(table["Set"]) == {"dev", "heldout", "exploratory"}
+    exploratory = rep["by_set"]["exploratory"]
+    lines = [c.value for c in at.caption if "xploratory" in c.value]
+    assert lines and f"{exploratory['correct']}/{exploratory['total']}" in lines[0]
+    assert any(f"{rep['n_questions']} fixed questions" in c.value for c in at.caption)                         # the headline caption
+    assert any(f"{rep['guard_cases_blocked']} of {rep['guard_cases_total']} raw attack queries" in c.value for c in at.caption)
 
 
 def test_the_committed_model_report_is_consistent():

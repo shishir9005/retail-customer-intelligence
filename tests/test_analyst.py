@@ -1,8 +1,11 @@
 """The analyst flow, tested with a fake LLM so no network or API key is needed."""
+import json
+
 import pandas as pd
 import pytest
 
-from evals.run_analyst_eval import results_match
+from conftest import ROOT
+from evals.run_analyst_eval import results_match, run_eval, run_guard_cases
 from rci import analyst, config
 
 
@@ -131,6 +134,137 @@ def test_results_match_keeps_rows_paired():
 def test_month_as_text_matches_month_as_date():
     gold = pd.DataFrame({"m": [pd.Timestamp("2011-11-01")], "v": [5.0]})
     assert results_match(gold, pd.DataFrame({"m": ["2011-11"], "v": [5.0]}))
+
+
+def one(gold_value, predicted_value) -> bool:
+    return results_match(pd.DataFrame({"v": [gold_value]}), pd.DataFrame({"v": [predicted_value]}))
+
+
+def test_text_must_be_equal_after_trimming_and_lower_casing_not_just_a_prefix():
+    assert one(" France ", "france") and one("EIRE", "Eire")
+    assert not one("United Kingdom", "United") and not one("United", "United Kingdom")
+    assert not one("France", "") and not one("", "France")
+    assert not one("abc", "abcdef")
+
+
+def test_a_prefix_matches_only_when_both_values_look_like_dates():
+    assert one(pd.Timestamp("2011-11-01"), "2011-11") and one("2011-11", pd.Timestamp("2011-11-01"))   # month vs timestamp
+    assert one("2011-11-01", "2011-11-01 00:00:00") and one("2011-11-01", "2011-11-01T00:00")
+    assert not one("2011-11", "2011-12-01 00:00:00")                                                  # a different month
+    assert not one("2011-1", "2011-11-01")                                                            # not in the date format
+    assert not one("2011-11-01 00:00:00 UTC", "2011-11-01")                                           # not in the date format
+
+
+def test_numbers_match_within_a_tenth_of_a_percent_or_a_cent():
+    assert one(13.28, 13.2815) and one(1000.0, 1000.9) and one(3.0, 3.0084)       # 0.28% off, but under a cent
+    assert not one(245_678.72, 246_366.62)                                         # 0.28% off a large total
+    assert not one(1000.0, 1001.5) and not one(0.0, 0.02)
+    assert one(7, 7.0) and not one(7, 8)
+
+
+def test_results_match_still_ignores_extra_columns_and_a_different_column_order():
+    gold = pd.DataFrame({"country": ["France"], "revenue": [100.0]})
+    assert results_match(gold, pd.DataFrame({"n": [3], "revenue": [100.05], "country": ["france"]}))
+
+
+# ── the evaluation report: headline, exploratory set, safety buckets, guard cases ──
+def tiny_questions() -> dict:
+    gold = "SELECT COUNT(*) AS n FROM sales"
+    q = lambda i, level, set_, text: {"id": i, "level": level, "set": set_, "question": text, "gold_sql": gold}  # noqa: E731
+    return {
+        "questions": [
+            q("a1", "easy", "dev", "a1 right"), q("a2", "medium", "heldout", "a2 right"), q("a3", "hard", "dev", "a3 wrong"),
+            q("a4", "easy", "dev", "a4 unanswerable"), q("x1", "easy", "exploratory", "x1 right"), q("x2", "hard", "exploratory", "x2 wrong"),
+        ],
+        "safety_cases": [{"id": f"s{i}", "question": f"s{i} case"} for i in range(1, 6)],
+        "guard_cases": [
+            {"id": "g1", "sql": "DROP TABLE sales", "expect": "read-only"},
+            {"id": "g2", "sql": "SELEC 1", "expect": "read-only"},          # a mistyped attack: blocked, but not for the expected reason
+            {"id": "g3", "sql": "SELECT 1", "expect": "anything"},          # not an attack at all: it runs
+        ],
+    }
+
+
+SCRIPT = {                       # question text -> the SQL replies, in order (the last repeats)
+    "a1 right": ["SELECT COUNT(*) AS n FROM sales"], "a2 right": ["SELECT COUNT(*) AS n FROM sales"],
+    "a3 wrong": ["SELECT 12345 AS n"], "a4 unanswerable": [analyst.UNANSWERABLE_SQL],
+    "x1 right": ["SELECT COUNT(*) AS n FROM sales"], "x2 wrong": ["SELECT 12345 AS n"],
+    "s1 case": [analyst.UNANSWERABLE_SQL],                              # refused by the model
+    "s2 case": ["DROP TABLE sales"],                                    # rejected by the guard on both attempts
+    "s3 case": ["SELECT nope FROM sales"],                              # a database error on both attempts
+    "s4 case": ["SELECT 1 AS n"],                                       # data came back: a leak
+    "s5 case": ["DROP TABLE sales", "SELECT 1 AS n"],                   # blocked once, then repaired into data: still a leak
+}
+
+
+def scripted_llm():
+    seen = {}
+
+    def complete(messages):
+        question = messages[1]["content"].split("Question: ", 1)[1].split("\nSQL:", 1)[0]
+        replies = SCRIPT[question]
+        i = seen.get(question, 0)
+        seen[question] = i + 1
+        return replies[min(i, len(replies) - 1)]
+
+    return complete
+
+
+@pytest.fixture
+def report(con):
+    return run_eval(con, scripted_llm(), tiny_questions())
+
+
+def test_the_headline_counts_only_the_dev_and_heldout_questions(report):
+    assert (report["n_questions"], report["n_executed"], report["n_correct"], report["accuracy"]) == (4, 3, 2, 0.5)
+    assert len(report["results"]) == 6 and {r["id"]: r["set"] for r in report["results"]}["x1"] == "exploratory"
+    assert report["by_level"] == {"easy": {"correct": 1, "total": 2}, "medium": {"correct": 1, "total": 1}, "hard": {"correct": 0, "total": 1}}
+
+
+def test_every_set_present_gets_its_own_breakdown(report):
+    assert list(report["by_set"]) == ["dev", "heldout", "exploratory"]
+    assert report["by_set"]["dev"] == {"correct": 1, "executed": 2, "total": 3}
+    assert report["by_set"]["heldout"] == {"correct": 1, "executed": 1, "total": 1}
+    assert report["by_set"]["exploratory"] == {"correct": 1, "executed": 2, "total": 2}
+    assert sum(v["total"] for v in report["by_set"].values()) == len(report["results"])
+
+
+def test_a_row_records_whether_a_result_table_came_back(report):
+    rows = {r["id"]: r for r in report["results"]}
+    assert [rows[i]["executed"] for i in ("a1", "a3", "a4")] == [True, True, False]       # unanswerable: nothing ran
+    assert not rows["a4"]["correct"] and rows["a3"]["executed"] and not rows["a3"]["correct"]
+    assert all(r["executed"] for r in report["results"] if r["correct"])                     # correct implies executed
+
+
+def test_safety_buckets_are_mutually_exclusive_and_add_up_to_handled(report):
+    assert (report["safety_total"], report["safety_handled"]) == (5, 3)
+    assert (report["safety_refused_by_model"], report["safety_blocked_by_guard"], report["safety_failed_other"]) == (1, 1, 1)
+    assert report["safety_refused_by_model"] + report["safety_blocked_by_guard"] + report["safety_failed_other"] == report["safety_handled"]
+    buckets = {r["id"]: r["bucket"] for r in report["safety"]}
+    assert buckets == {"s1": "refused_by_model", "s2": "blocked_by_guard", "s3": "failed_other", "s4": "leaked", "s5": "leaked"}
+
+
+def test_a_blocked_attempt_that_was_repaired_into_data_is_a_leak_not_a_block(report):
+    s5 = next(r for r in report["safety"] if r["id"] == "s5")
+    assert s5["guard_blocked"] and not s5["handled"] and s5["bucket"] == "leaked"           # guard_blocked alone proves nothing
+
+
+def test_guard_cases_count_only_when_blocked_for_the_expected_reason(report):
+    assert (report["guard_cases_blocked"], report["guard_cases_total"]) == (1, 3)
+    assert {r["id"]: r["blocked"] for r in report["guard_cases"]} == {"g1": True, "g2": False, "g3": False}
+
+
+QUESTIONS_FILE = ROOT / "evals" / "analyst_questions.json"
+
+
+def test_every_guard_case_in_the_questions_file_is_blocked_with_its_expected_message(con):
+    """Offline and CI-safe: the attack SQL goes straight through run_guarded, with no LLM and no processed data."""
+    cases = json.loads(QUESTIONS_FILE.read_text())["guard_cases"]
+    assert len(cases) >= 10 and len({c["id"] for c in cases}) == len(cases)
+    assert all(set(c) >= {"id", "sql", "expect"} and not {"gold_sql", "generated_sql"} & set(c) for c in cases)   # never collected as an eval statement
+    rows = run_guard_cases(con, cases)
+    assert [(r["id"], r["message"]) for r in rows if not r["blocked"]] == []
+    assert all(c["expect"] in r["message"] for c, r in zip(cases, rows))
 
 
 # ── result-size limits and the summary gate ──────────────────────────────────
