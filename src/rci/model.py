@@ -144,7 +144,6 @@ def main() -> None:
     con = db.connect()
     check_labels_observable(config.SPLITS, db.data_end(con))
     cols = features.feature_columns(con)
-    names = features.category_columns(con)
 
     data = {s: features.build_dataset(con, cut) for s, cut in config.SPLITS.items()}
     X = {s: d[cols] for s, d in data.items()}
@@ -178,7 +177,7 @@ def main() -> None:
     imp = permutation_importance(gbm, X["valid"], y["valid"], scoring="roc_auc", n_repeats=15,
                                  random_state=config.SEED)
     importance = sorted(
-        ({"feature": c, "label": names.get(c, c).replace("_", " "),
+        ({"feature": c, "label": c.replace("_", " "),
           "mean": float(m), "std": float(s)} for c, m, s in zip(cols, imp.importances_mean, imp.importances_std)),
         key=lambda r: -r["mean"],
     )
@@ -189,6 +188,7 @@ def main() -> None:
         "gbm_model": gbm_name,
         "lightgbm_used": gbm_name == "LightGBM",
         "gbm_trees": int(getattr(gbm, "best_iteration_", None) or getattr(gbm, "n_iter_", 0)),
+        "features": cols,
         "horizon_days": horizon,
         "splits": {
             s: {

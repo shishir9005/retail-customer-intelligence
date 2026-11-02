@@ -87,12 +87,3 @@ LEFT JOIN gap_stats g USING (customer_id)
 LEFT JOIN return_stats r USING (customer_id)
 LEFT JOIN future f USING (customer_id)
 ORDER BY o.customer_id;
-
--- name: category_revenue
--- Revenue per customer per product category BEFORE the cutoff (turned into shares in features.py).
-SELECT customer_id, category, SUM(revenue) AS revenue
-FROM sales
-WHERE customer_id IS NOT NULL
-  AND invoice_date < $cutoff
-  AND category IS NOT NULL
-GROUP BY customer_id, category;

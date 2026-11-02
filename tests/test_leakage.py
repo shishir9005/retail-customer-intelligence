@@ -9,8 +9,10 @@ period being predicted reach the training features?":
   4. Fitted scalers see training rows only.
   5. Labels that are not fully observed are REFUSED (they used to be cast to garbage integers silently).
   6. Segments are refitted from earlier data only when they are validated against later behaviour.
-  7. The steps that run over all dates before the split (price-median cleaning, category clustering)
-     are measured to have no material effect on the feature matrices or the test metrics.
+  7. The step that runs over all dates before the split (price-median cleaning) is measured to have no effect on
+     identified customers' rows, and the features are checked not to depend on the category file (which is clustered
+     over all products, dates included): the snapshots are identical with and without it, and none of them has a
+     category column.
 
 tests/test_no_leakage.py holds the small hand-checkable versions of 1 on a toy dataset.
 """
@@ -24,7 +26,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from rci import config, db, features, metrics, model, pipeline, segments, sql_guard
+from rci import config, db, features, model, pipeline, segments, sql_guard
 
 from conftest import PROCESSED, write_frames
 
@@ -126,12 +128,11 @@ def test_sql_features_match_an_independent_pandas_implementation(cutoff, real_co
 
 
 # ═════════════════════ 3. the feature SQL can only read sales and returns ═════════════════════
-@pytest.mark.parametrize("name,expected", [("features", {"sales", "returns"}), ("category_revenue", {"sales"})])
-def test_feature_sql_reads_only_the_event_tables(name, expected):
+def test_feature_sql_reads_only_the_event_tables():
     """Never `customers`, `segments` or the all-time `products` statistics (which aggregate over every date)."""
-    sql = db.all_queries()[name].replace("$cutoff", "DATE '2011-01-01'").replace("$horizon", "90")
+    sql = db.all_queries()["features"].replace("$cutoff", "DATE '2011-01-01'").replace("$horizon", "90")
     tables, table_functions = sql_guard.parse_references(sql)
-    assert tables == expected
+    assert tables == {"sales", "returns"}
     assert not table_functions
 
 
@@ -314,36 +315,35 @@ def test_price_median_rule_never_changes_an_identified_customers_rows():
 
 
 @pytest.mark.slow
-def test_fitting_categories_on_all_products_does_not_move_the_test_metrics(real_frames, tmp_path):
-    """products.py clusters ALL products, including ones first sold after the training cutoffs. Refit using only
-    products seen before the earliest cutoff (new ones go to the nearest cluster) and retrain: the test AUC
-    must move by less than a hundredth, far more than the run-to-run noise (about 0.001)."""
-    from sklearn.cluster import KMeans
+def test_the_features_do_not_depend_on_the_category_file(real_frames, tmp_path):
+    """products.py clusters ALL products, including ones first sold after the training cutoffs, so nothing the model
+    reads may depend on that file. Build the real database twice, with and without product_categories.parquet: the
+    snapshot at every cutoff must be exactly the same, and none of it may be a category column.
 
+    threads=1 is required: with several threads DuckDB adds the money values in a varying order, so avg_order_value
+    can differ by a penny between two builds of the very same data."""
     sales, returns, products, cats = (real_frames[k] for k in ("sales", "returns", "products", "product_categories"))
-    emb = np.load(PROCESSED / "product_embeddings.npy").astype(np.float32)
-    assert len(emb) == len(products), "embedding rows must follow products.parquet order"
+    write_frames(tmp_path / "with_categories", sales, returns, products, cats)
+    write_frames(tmp_path / "without_categories", sales, returns, products)
+    with_cats = db.connect(tmp_path / "with_categories", threads=1)
+    without = db.connect(tmp_path / "without_categories", threads=1)
+    # the test is only meaningful if the categories really are visible in one database and absent from the other
+    assert with_cats.cursor().execute("SELECT COUNT(category) FROM sales").fetchone()[0] > 0
+    assert without.cursor().execute("SELECT COUNT(category) FROM sales").fetchone()[0] == 0
 
-    earliest = pd.Timestamp(config.SPLITS["train"][0])
-    first_sale = sales.groupby("stock_code")["invoice_date"].min().reindex(products["stock_code"])
-    seen_early = (first_sale < earliest).to_numpy()
-    assert (~seen_early).sum() > 0, "no products appear after the earliest cutoff, so there is nothing to measure"
+    assert features.feature_columns(with_cats) == features.BASE_FEATURES
+    assert not [c for c in features.feature_columns(with_cats) if c.startswith("cat_")]
+    for split, cutoff in ALL_CUTOFFS:
+        a, b = features.build_snapshot(with_cats, cutoff), features.build_snapshot(without, cutoff)
+        assert not [c for c in a.columns if c.startswith("cat_")], f"{split} {cutoff}: a category column is in the snapshot"
+        pd.testing.assert_frame_equal(a, b)
 
-    def test_auc(categories: pd.DataFrame, name: str) -> float:
-        directory = tmp_path / name
-        write_frames(directory, sales, returns, products, categories)
-        con = db.connect(directory)
-        cols = features.feature_columns(con)
-        data = {s: features.build_dataset(con, cs) for s, cs in config.SPLITS.items()}
-        X = {s: d[cols] for s, d in data.items()}
-        y = {s: model.labels_as_int(d, s) for s, d in data.items()}
-        gbm, _ = model.fit_gbm(X["train"], y["train"], X["valid"], y["valid"])
-        return metrics.point_metrics(y["test"], gbm.predict_proba(X["test"])[:, 1])["roc_auc"]
 
-    shipped_auc = test_auc(cats, "shipped")
-    km = KMeans(cats["category"].nunique(), n_init=10, random_state=config.SEED).fit(emb[seen_early])
-    ids = km.predict(emb)
-    causal = products[["stock_code"]].assign(category_id=ids.astype("int32"), category=[f"cluster_{i:02d}" for i in ids])
-    causal_auc = test_auc(causal, "causal")
-
-    assert abs(causal_auc - shipped_auc) < 0.01, f"shipped {shipped_auc:.4f} vs causal {causal_auc:.4f}"
+def test_metrics_json_lists_the_features_the_model_was_trained_on(real_con):
+    path = PROCESSED / "metrics.json"
+    if not path.exists():
+        pytest.skip("model not built")
+    report = json.loads(path.read_text())
+    assert report["features"] == features.feature_columns(real_con)
+    assert len(report["features"]) == 13 and not [c for c in report["features"] if c.startswith("cat_")]
+    assert sorted(r["feature"] for r in report["importance"]) == sorted(report["features"])   # the importances cover exactly those

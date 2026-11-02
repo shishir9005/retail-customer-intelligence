@@ -4,14 +4,13 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from rci import db, quality
+from rci import db, features, quality
 
 PARAMS = {
     "top_products": {"n": 3},
     "top_countries": {"n": 3},
     "rfm": {"as_of": dt.date(2011, 6, 1)},
     "features": {"cutoff": dt.date(2011, 4, 1), "horizon": 90},
-    "category_revenue": {"cutoff": dt.date(2011, 4, 1)},
 }
 
 
@@ -75,6 +74,22 @@ def test_rfm_hand_check(con):
 def test_customers_table_uses_the_same_rfm_definition(con):
     c = con.execute("SELECT customer_id, frequency, monetary FROM customers ORDER BY 1").df().set_index("customer_id")
     assert c.loc[4, "frequency"] == 1                 # as_of = day after the last order, so everyone is included
+
+
+def test_the_model_features_are_the_13_base_features_and_no_category_columns(tmp_path, frames):
+    sales, returns, products = frames
+    categories = pd.DataFrame({"stock_code": products["stock_code"], "category_id": 0, "category": "Gifts"})
+    from conftest import write_frames
+    write_frames(tmp_path, sales, returns, products, categories)              # categories exist, and the model must ignore them
+    con = db.connect(tmp_path)
+    assert features.feature_columns(con) == features.BASE_FEATURES and len(features.BASE_FEATURES) == 13
+    snap = features.build_snapshot(con, dt.date(2011, 4, 1))
+    assert list(snap.columns) == ["customer_id", "snapshot", *features.BASE_FEATURES, "label"]
+
+
+def test_the_category_feature_code_is_gone():
+    assert "category_revenue" not in db.all_queries()
+    assert not hasattr(features, "category_names") and not hasattr(features, "category_columns")
 
 
 def test_quality_checks_pass_on_clean_data(con):
