@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from rci import config, db, features
-from rci.model import check_split_chain
+from rci.model import check_labels_observable, check_split_chain
 
 from conftest import CUTOFF, write_frames
 
@@ -94,3 +94,30 @@ def test_test_labels_are_fully_observable(real_con):
     last = db.data_end(real_con)
     for cutoff in config.SPLITS["test"]:
         assert features.label_is_observable(last, pd.Timestamp(cutoff).date(), config.HORIZON_DAYS)
+
+
+# ── the three-quarter backtest folds ─────────────────────────────────────────
+FOLDS = list(config.BACKTEST_FOLDS)
+
+
+def test_the_backtest_has_three_folds_and_the_last_is_the_main_split():
+    assert FOLDS == ["2011-03", "2011-06", "2011-09"]
+    assert [config.BACKTEST_FOLDS[f]["test"] for f in FOLDS] == [["2011-03-09"], ["2011-06-09"], ["2011-09-09"]]
+    assert config.BACKTEST_FOLDS["2011-09"] == config.SPLITS
+
+
+@pytest.mark.parametrize("fold", FOLDS)
+def test_every_backtest_fold_passes_the_split_chain_check(fold):
+    check_split_chain(config.BACKTEST_FOLDS[fold])
+
+
+@pytest.mark.parametrize("fold", FOLDS)
+def test_every_backtest_fold_has_fully_observed_labels(fold, real_con):
+    check_labels_observable(config.BACKTEST_FOLDS[fold], db.data_end(real_con))
+
+
+def test_each_fold_trains_on_everything_the_previous_fold_saw():
+    """An expanding window: a later fold's training cutoffs are the previous fold's training plus its validation cutoff."""
+    for earlier, later in zip(FOLDS, FOLDS[1:]):
+        a, b = config.BACKTEST_FOLDS[earlier], config.BACKTEST_FOLDS[later]
+        assert b["train"] == a["train"] + a["valid"]

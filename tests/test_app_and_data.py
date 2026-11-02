@@ -104,3 +104,38 @@ def test_the_committed_model_report_is_consistent():
         for metric, v in d.items():
             assert v["ci_low"] <= v["value"] <= v["ci_high"], (name, metric)
     assert m["base_rate_test"] == pytest.approx(m["splits"]["test"]["repurchase_rate"], abs=1e-3)
+
+
+def test_the_committed_backtest_is_consistent_with_the_main_table():
+    path = PROCESSED / "metrics.json"
+    if not path.exists():
+        pytest.skip("model not trained")
+    m = json.loads(path.read_text())
+    bt = m["backtest"]
+    assert bt["title"] == "Three-quarter backtest (MLP not included)"
+    assert [f["label"] for f in bt["folds"]] == ["2011-03", "2011-06", "2011-09"]
+    assert m["latest_quarter_only"] == ["PyTorch MLP"] and "PyTorch MLP" in m["models"]    # labelled, and kept out of `models`' metric schema
+    assert "PyTorch MLP" not in bt["mean"] and all("PyTorch MLP" not in f["roc_auc"] for f in bt["folds"])
+    assert set(bt["folds"][0]["roc_auc"]) == set(bt["models"]) == set(m["models"]) - {"PyTorch MLP"}
+    for name in bt["models"]:                                                              # fold 3 IS the main split
+        assert m["models"][name]["roc_auc"]["value"] == pytest.approx(bt["folds"][2]["roc_auc"][name], abs=0.002), name
+        assert bt["mean"][name] == pytest.approx(sum(f["roc_auc"][name] for f in bt["folds"]) / 3)
+    assert bt["folds"][2]["test_customers"] == m["test_customers"]
+    gap = [f["roc_auc"][m["gbm_model"]] - f["roc_auc"]["Logistic regression"] for f in bt["folds"]]
+    assert bt["gbm_minus_logreg"]["per_fold"] == pytest.approx(gap) and bt["gbm_minus_logreg"]["mean"] == pytest.approx(sum(gap) / 3)
+
+
+def test_the_model_page_shows_the_backtest_and_labels_the_mlp_as_latest_quarter_only(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    at = AppTest.from_file(str(APP / "pages" / "2_Repurchase_Model.py"), default_timeout=120).run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "Three-quarter backtest (MLP not included)" in [s.value for s in at.subheader]
+    text = " ".join(e.value for group in (at.markdown, at.caption, at.info, at.success, at.warning) for e in group)
+    assert "the gain is real" not in text and "excludes zero" not in text
+    tables = [d.value for d in at.dataframe]
+    main = next(t for t in tables if "PyTorch MLP" in t.to_string())
+    mlp_row = main[main["Model"] == "PyTorch MLP"].to_string()
+    assert "latest quarter only (Sep–Dec 2011)" in mlp_row
+    assert "latest quarter only" not in main[main["Model"] == "Logistic regression"].to_string()
+    backtest = next(t for t in tables if "2011-03" in t.to_string() and "PyTorch MLP" not in t.to_string())
+    assert {"2011-03", "2011-06", "2011-09", "Mean"} <= set(backtest.columns)

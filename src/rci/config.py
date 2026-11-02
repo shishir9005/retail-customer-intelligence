@@ -29,6 +29,13 @@ SPLITS = {
     "valid": ["2011-06-09"],
     "test": ["2011-09-09"],
 }
+# Three successive test quarters (an expanding window), keyed by the month of each test cutoff. Every fold must pass
+# model.check_split_chain and model.check_labels_observable; the last fold IS the main split above.
+BACKTEST_FOLDS = {
+    "2011-03": {"train": ["2010-06-09", "2010-09-09"], "valid": ["2010-12-09"], "test": ["2011-03-09"]},
+    "2011-06": {"train": ["2010-06-09", "2010-09-09", "2010-12-09"], "valid": ["2011-03-09"], "test": ["2011-06-09"]},
+    "2011-09": SPLITS,
+}
 
 # ── AI analyst ───────────────────────────────────────────────────────────────
 GROQ_MODEL = "openai/gpt-oss-120b"

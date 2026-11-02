@@ -1,12 +1,15 @@
-"""Will this customer buy again in the next 90 days?  Honest comparison of four scorers.
+"""Will this customer buy again in the next 90 days?  Honest comparison of scorers.
 
   1. Recency rule        score = -days since last order (the simplest thing a marketer would do)
-  2. Logistic regression a linear baseline
-  3. Gradient boosting   LightGBM if available, else scikit-learn's HistGradientBoosting (same idea)
-  4. PyTorch MLP         a small neural network (only if torch is installed)
+  2. Recent-orders rule  orders in the last 90 days, a tie going to the more recent customer
+  3. Logistic regression (recency + frequency)   the simplest learned baseline
+  4. Logistic regression a linear baseline on all 13 features
+  5. Gradient boosting   LightGBM if available, else scikit-learn's HistGradientBoosting (same idea)
+  6. PyTorch MLP         a small neural network (only if torch is installed)
 
 Splitting is by TIME, never random: train on earlier "pretend todays", tune on a later one, and
-report on the latest one. See config.SPLITS and tests/test_no_leakage.py.
+report on the latest one. See config.SPLITS and tests/test_no_leakage.py. models 1-5 are also scored on
+three successive test quarters (config.BACKTEST_FOLDS); the MLP is trained for the latest quarter only.
 
 Run:  python -m rci.model
 """
@@ -27,8 +30,13 @@ from sklearn.preprocessing import StandardScaler
 from rci import config, db, features, metrics
 
 RECENCY_RULE = "Recency rule"
+RECENT_ORDERS_RULE = "Recent-orders rule"
+LOGREG_2 = "Logistic regression (recency + frequency)"
 LOGREG = "Logistic regression"
 MLP_NAME = "PyTorch MLP"
+RECENCY_FREQUENCY = ["recency_days", "frequency"]
+BACKTEST_TITLE = "Three-quarter backtest (MLP not included)"
+LATEST_QUARTER_LABEL = "latest quarter only (Sep–Dec 2011)"
 
 
 # ── split safety ─────────────────────────────────────────────────────────────
@@ -93,6 +101,21 @@ def fit_logreg(X: pd.DataFrame, y: np.ndarray):
     return pipe
 
 
+def recent_orders_score(Z: pd.DataFrame) -> np.ndarray:
+    """Orders in the last 90 days, minus recency / 10,000 as a tie-break (it stays below 1 for any recency under
+    10,000 days, so it can never outrank a whole order)."""
+    return Z["orders_last_90d"].to_numpy() - Z["recency_days"].to_numpy() / 10_000
+
+
+def fit_logreg_recency_frequency(X: pd.DataFrame, y: np.ndarray):
+    """The simplest learned baseline: log(1+x) of recency and frequency only -> standardise -> logistic regression.
+    Returns a function that scores a feature table (it reads no other column)."""
+    pipe = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, max_iter=2000))
+    log_two = lambda Z: np.log1p(Z[RECENCY_FREQUENCY].clip(lower=0))  # noqa: E731
+    pipe.fit(log_two(X), y)
+    return lambda Z: pipe.predict_proba(log_two(Z))[:, 1]
+
+
 def lightgbm_available() -> bool:
     try:
         import lightgbm  # noqa: F401
@@ -138,25 +161,75 @@ def fit_mlp_scorer(Xtr, ytr, Xva, yva):
     return (lambda X: predict(prep(X))), history
 
 
+def fit_scorers(X: dict, y: dict) -> tuple[dict, object, str]:
+    """The five scorers that are not neural, fitted on the train rows (boosting stops early on the valid rows).
+
+    The main table and every backtest fold both use this, so they can never be built differently.
+    Returns ({name: score function}, the boosting model, its display name).
+    """
+    lr = fit_logreg(X["train"], y["train"])
+    gbm, gbm_name = fit_gbm(X["train"], y["train"], X["valid"], y["valid"])
+    scorers = {
+        RECENCY_RULE: lambda Z: -Z["recency_days"].to_numpy(),
+        RECENT_ORDERS_RULE: recent_orders_score,
+        LOGREG_2: fit_logreg_recency_frequency(X["train"], y["train"]),
+        LOGREG: lambda Z: lr.predict_proba(features.log_transform(Z))[:, 1],
+        gbm_name: lambda Z: gbm.predict_proba(Z)[:, 1],
+    }
+    return scorers, gbm, gbm_name
+
+
+def backtest(dataset, cols: list[str], folds: dict[str, dict[str, list[str]]] = config.BACKTEST_FOLDS) -> dict:
+    """ROC-AUC of every non-neural scorer on three successive test quarters, each fold trained only on earlier data.
+
+    `dataset(cutoffs)` returns the stacked snapshots (feature columns and `label`) for those cutoffs. The MLP is not
+    part of this: it is trained for the latest quarter only, so it must never be averaged or ranked against these means.
+    """
+    results = []
+    for label, fold in folds.items():
+        data = {s: dataset(cutoffs) for s, cutoffs in fold.items()}
+        X = {s: d[cols] for s, d in data.items()}
+        y = {s: labels_as_int(d, f"{label} {s}") for s, d in data.items()}
+        scorers, _, gbm_name = fit_scorers(X, y)
+        results.append({
+            "label": label, "splits": fold, "test_customers": int(len(y["test"])),
+            "repurchase_rate": round(float(y["test"].mean()), 4),
+            "roc_auc": {m: float(roc_auc_score(y["test"], score(X["test"]))) for m, score in scorers.items()},
+        })
+    names = list(results[0]["roc_auc"])
+    gap = [r["roc_auc"][gbm_name] - r["roc_auc"][LOGREG] for r in results]
+    return {
+        "title": BACKTEST_TITLE, "metric": "roc_auc", "models": names, "folds": results,
+        "mean": {m: float(np.mean([r["roc_auc"][m] for r in results])) for m in names},
+        "gbm_minus_logreg": {"per_fold": gap, "mean": float(np.mean(gap))},
+    }
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 def main() -> None:
     check_split_chain(config.SPLITS)
     con = db.connect()
-    check_labels_observable(config.SPLITS, db.data_end(con))
+    last_day = db.data_end(con)
+    for fold in (config.SPLITS, *config.BACKTEST_FOLDS.values()):
+        check_split_chain(fold)
+        check_labels_observable(fold, last_day)
     cols = features.feature_columns(con)
 
-    data = {s: features.build_dataset(con, cut) for s, cut in config.SPLITS.items()}
+    snapshots: dict[str, pd.DataFrame] = {}      # one snapshot per cutoff, shared by the main table and the backtest
+
+    def dataset(cutoffs: list[str]) -> pd.DataFrame:
+        for c in cutoffs:
+            if c not in snapshots:
+                snapshots[c] = features.build_snapshot(con, c)
+        return pd.concat([snapshots[c] for c in cutoffs], ignore_index=True)
+
+    data = {s: dataset(cut) for s, cut in config.SPLITS.items()}
     X = {s: d[cols] for s, d in data.items()}
     y = {s: labels_as_int(d, s) for s, d in data.items()}
     for s in data:
         print(f"{s:<6} rows={len(data[s]):>6,}  repurchase rate={y[s].mean():.3f}  cutoffs={config.SPLITS[s]}")
 
-    scorers: dict[str, callable] = {}
-    scorers[RECENCY_RULE] = lambda Z: -Z["recency_days"].to_numpy()
-    lr = fit_logreg(X["train"], y["train"])
-    scorers[LOGREG] = lambda Z: lr.predict_proba(features.log_transform(Z))[:, 1]
-    gbm, gbm_name = fit_gbm(X["train"], y["train"], X["valid"], y["valid"])
-    scorers[gbm_name] = lambda Z: gbm.predict_proba(Z)[:, 1]
+    scorers, gbm, gbm_name = fit_scorers(X, y)
     mlp_history = None
     try:
         mlp_predict, mlp_history = fit_mlp_scorer(X["train"], y["train"], X["valid"], y["valid"])
@@ -182,7 +255,14 @@ def main() -> None:
         key=lambda r: -r["mean"],
     )
 
-    last_day = db.data_end(con)
+    bt = backtest(dataset, cols)
+    print(f"\n{BACKTEST_TITLE}: ROC-AUC")
+    print(f"{'model':<44}" + "".join(f"{f['label']:>9}" for f in bt["folds"]) + f"{'mean':>9}")
+    for m in bt["models"]:
+        print(f"{m:<44}" + "".join(f"{f['roc_auc'][m]:>9.3f}" for f in bt["folds"]) + f"{bt['mean'][m]:>9.3f}")
+    print(f"{'GBM minus logistic regression':<44}" + "".join(f"{g:>+9.3f}" for g in bt["gbm_minus_logreg"]["per_fold"])
+          + f"{bt['gbm_minus_logreg']['mean']:>+9.3f}")
+
     horizon = config.HORIZON_DAYS
     report = {
         "gbm_model": gbm_name,
@@ -205,6 +285,9 @@ def main() -> None:
             m: {k: {"value": point[m][k], "ci_low": ci[m][k][0], "ci_high": ci[m][k][1]} for k in point[m]}
             for m in scorers
         },
+        "latest_quarter_only": [MLP_NAME] if MLP_NAME in scorers else [],      # trained for the latest quarter only: not in the backtest
+        "latest_quarter_label": LATEST_QUARTER_LABEL,
+        "backtest": bt,
         "auc_diff_vs_logreg": {m: {"ci_low": lo, "ci_high": hi, "value": point[m]["roc_auc"] - point[LOGREG]["roc_auc"]}
                                for m, (lo, hi) in diff_ci.items()},
         "curves": {m: {"gain": metrics.gain_curve(y["test"], s), "roc": metrics.roc_points(y["test"], s),

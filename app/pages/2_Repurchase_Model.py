@@ -1,4 +1,4 @@
-"""The 90-day repurchase model: honest comparison of four scorers, with uncertainty."""
+"""The 90-day repurchase model: honest comparison of scorers, with uncertainty and a three-quarter backtest."""
 import sys
 from pathlib import Path
 
@@ -22,6 +22,9 @@ gbm = m["gbm_model"]
 models = m["models"]
 best = models[gbm]
 base = m["base_rate_test"]
+bt = m.get("backtest")                                   # three successive test quarters, MLP not included
+latest_only = m.get("latest_quarter_only", [])           # trained for the latest quarter only
+latest_label = m.get("latest_quarter_label", "latest quarter only")
 
 st.write(
     "For each customer I pretend it is a certain date (a **cutoff**). Features come only from orders **before** it; "
@@ -61,7 +64,8 @@ def cell(d: dict, pct: bool = False) -> str:
 
 results = pd.DataFrame([
     {"Model": name, "ROC-AUC": cell(d["roc_auc"]), "PR-AUC": cell(d["pr_auc"]),
-     "Top 20% contains": cell(d["top20_capture"], True), "Top 20% who really return": cell(d["top20_precision"], True)}
+     "Top 20% contains": cell(d["top20_capture"], True), "Top 20% who really return": cell(d["top20_precision"], True),
+     "In the backtest below?": f"No: {latest_label}" if name in latest_only else "Yes"}
     for name, d in models.items()
 ])
 st.dataframe(results, hide_index=True)
@@ -81,12 +85,42 @@ st.info(
 
 diff = m["auc_diff_vs_logreg"]
 d_gbm = diff[gbm]
-st.write(
-    f"**Is the fancier model really better?** {gbm} beats logistic regression by {d_gbm['value']:+.3f} ROC-AUC "
-    f"(95% interval {d_gbm['ci_low']:+.3f} to {d_gbm['ci_high']:+.3f}). The interval excludes zero, so the gain is real, "
-    "but it is small: most of the signal sits in simple recency and frequency features, which even the one-line "
-    "'recency rule' captures well."
-)
+if bt:
+    st.subheader(bt["title"])
+    folds = bt["folds"]
+    gap = bt["gbm_minus_logreg"]
+    rows = [{"Model": name, **{f["label"]: f"{f['roc_auc'][name]:.3f}" for f in folds}, "Mean": f"{bt['mean'][name]:.3f}"}
+            for name in bt["models"]]
+    rows.append({"Model": f"{gbm} minus logistic regression", **{f["label"]: f"{g:+.3f}" for f, g in zip(folds, gap["per_fold"])},
+                 "Mean": f"{gap['mean']:+.3f}"})
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
+    st.caption(
+        "ROC-AUC on three successive test quarters (test cutoffs " + ", ".join(f["splits"]["test"][0] for f in folds) + "). Each quarter "
+        "trains only on earlier cutoffs and picks the number of trees on the cutoff before its test one. The last quarter is the main "
+        "table above. The neural network was trained for the latest quarter only, so it is not here: do not compare it with these means."
+    )
+    wins = sum(g > 0 for g in gap["per_fold"])
+    if wins == len(folds):
+        verdict = f"{gbm} was ahead in every quarter."
+    elif wins == 0:
+        verdict = f"{gbm} was behind in every quarter."
+    else:
+        verdict = "The sign of the gap changes between quarters, so no single quarter settles which of the two is better."
+    two = bt["mean"].get("Logistic regression (recency + frequency)")
+    full = bt["mean"].get("Logistic regression")
+    st.write(
+        f"**Is the fancier model better?** {gbm} minus logistic regression, quarter by quarter: "
+        + ", ".join(f"{f['label']} {g:+.3f}" for f, g in zip(folds, gap["per_fold"]))
+        + f" ROC-AUC (average {gap['mean']:+.3f}). {verdict} In the latest quarter alone the gap is {d_gbm['value']:+.3f} "
+        f"(95% bootstrap interval {d_gbm['ci_low']:+.3f} to {d_gbm['ci_high']:+.3f}). "
+        + (f"For scale, logistic regression on recency and frequency alone averages {two:.3f}, against {full:.3f} for the full "
+           f"logistic regression and {bt['mean'][gbm]:.3f} for {gbm}." if two and full else "")
+    )
+else:
+    st.write(
+        f"**Is the fancier model better?** In the latest quarter {gbm} minus logistic regression is {d_gbm['value']:+.3f} ROC-AUC "
+        f"(95% bootstrap interval {d_gbm['ci_low']:+.3f} to {d_gbm['ci_high']:+.3f}). Run `make model` for the three-quarter backtest."
+    )
 
 tab_gain, tab_roc, tab_pr = st.tabs(["Gain curve", "ROC curve", "Precision-recall curve"])
 curves = m["curves"]
@@ -164,6 +198,16 @@ if tbl is not None:
     st.caption(note + " Scores are as of 10 Dec 2011, the day after the data ends. Use them to rank customers: the absolute "
                "percentages depend on the season (the test window includes Christmas).")
 
+if "PyTorch MLP" in models:
+    mlp_gap = best["roc_auc"]["value"] - models["PyTorch MLP"]["roc_auc"]["value"]
+    mlp_note = (
+        f"On the latest quarter their ROC-AUC differs by {mlp_gap:+.3f} ({gbm} minus the MLP). The MLP was trained for that quarter only "
+        "and is not in the backtest, so this page does not rank the two. Trees are often strong on about 15,000 rows of skewed, "
+        "mixed-scale table data (no scaling needed, interactions found automatically), but this project did not test why."
+    )
+else:
+    mlp_note = "The neural network was skipped on this machine (PyTorch is not installed), so only the other scorers are compared."
+
 gbm_note = "" if m["lightgbm_used"] else (
     " (LightGBM was not available on this machine, so scikit-learn's HistGradientBoosting, "
     "the same algorithm family, was used)")
@@ -175,10 +219,9 @@ with st.expander("Interview notes: why these choices?"):
   model would look better than it is. Here the test period is strictly later than everything the model learned from.
 - **PR-AUC and 'top 20%' alongside ROC-AUC.** Marketing contacts a limited list, so what matters is how good the *top* of
   the ranking is. Plain accuracy would hide that.
-- **Baselines first.** A model only matters if it beats something simple: here the one-line recency rule and logistic regression.
-- **Why did {gbm} beat the neural network (if it did)?** About 15,000 rows of skewed, mixed-scale table data is where trees
-  shine: they need no scaling and find interactions automatically. The MLP needs more tuning and more data to compete,
-  and the gap here is small.
+- **Baselines first.** A model only matters if it beats something simple: here the one-line recency rule, the recent-orders
+  rule, a logistic regression on recency and frequency alone, and the full logistic regression.
+- **{gbm} and the neural network.** {mlp_note}
 - **Gradient boosting library:** this run used **{gbm}**{gbm_note}.
 - **Caveats:** one test period; it includes the Christmas peak; brand-new customers (no history) are not scored.
         """
