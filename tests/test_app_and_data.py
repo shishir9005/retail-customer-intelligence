@@ -73,7 +73,7 @@ def test_ask_page_without_a_key_explains_instead_of_failing(monkeypatch):
 
 # ── the evaluation set ───────────────────────────────────────────────────────
 QUESTIONS = json.loads((ROOT / "evals" / "analyst_questions.json").read_text())
-FROZEN_GOLD_SHA256 = "7c7418b71790c45ae3104c25a3c684d13c82729b33e5f917fd03667d841077d4"
+FROZEN_GOLD_SHA256 = "fcd7c2eaecae4e8b721d9f837093ee60063524c53ae2b53206509c3e28e9c5b0"
 
 
 @pytest.mark.parametrize("q", QUESTIONS["questions"], ids=lambda q: q["id"])
@@ -90,9 +90,12 @@ def test_eval_ids_are_unique_and_levels_are_known():
 
 
 def test_the_gold_sql_is_frozen():
-    """The questions and gold SQL were fixed before the live run. Changing any of them changes this hash: do it only
-    if a gold SQL is wrong, re-score the saved SQL offline, and say so in the commit message."""
-    frozen = json.dumps([[q["id"], q["question"], q["gold_sql"]] for q in QUESTIONS["questions"]])
+    """The questions were fixed before the live run. The hash covers each question's id, text, gold SQL, set, level and
+    order_matters (False when absent), so moving a question between the headline and exploratory sets, or changing how
+    its result is compared, is caught too. Change any of them only if a gold SQL is wrong: re-score the saved SQL
+    offline, and say so in the commit message."""
+    frozen = json.dumps([[q["id"], q["question"], q["gold_sql"], q["set"], q["level"], q.get("order_matters", False)]
+                         for q in QUESTIONS["questions"]])
     assert hashlib.sha256(frozen.encode()).hexdigest() == FROZEN_GOLD_SHA256
 
 
@@ -107,6 +110,8 @@ def test_saved_eval_report_is_consistent():
     rows = rep["results"]
     headline = [r for r in rows if r["set"] in HEADLINE_SETS]
     assert [r["id"] for r in rows] == [q["id"] for q in QUESTIONS["questions"]] and len(rows) == 40
+    for row, q in zip(rows, QUESTIONS["questions"]):                      # each row must belong to the question it claims
+        assert (row["set"], row["level"], row["gold_sql"]) == (q["set"], q["level"], q["gold_sql"]), row["id"]
     assert {r["set"] for r in rows} == {"dev", "heldout", "exploratory"}
 
     # the headline is the dev + held-out questions only; the exploratory set never enters it
