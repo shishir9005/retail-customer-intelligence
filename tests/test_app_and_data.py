@@ -2,6 +2,7 @@
 import hashlib
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -216,3 +217,28 @@ def test_the_model_page_shows_the_backtest_and_labels_the_mlp_as_latest_quarter_
     assert "latest quarter only" not in main[main["Model"] == "Logistic regression"].to_string()
     backtest = next(t for t in tables if "2011-03" in t.to_string() and "PyTorch MLP" not in t.to_string())
     assert {"2011-03", "2011-06", "2011-09", "Mean"} <= set(backtest.columns)
+
+
+# ── the README results blocks are generated, never typed ─────────────────────
+def test_the_readme_results_blocks_are_what_render_results_generates(monkeypatch):
+    """Both generated blocks (RESULTS and RESULTS_ZH) must equal render_results.build(), apart from the test-count lines
+    (they change whenever a test is added). count_tests is replaced so the test does not start a nested pytest run."""
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    import render_results
+
+    monkeypatch.setattr(render_results, "count_tests", lambda: 1)
+    built = render_results.build()
+    readme = (ROOT / "README.md").read_text()
+
+    def block(tag: str) -> str:
+        return re.search(rf"<!-- {tag}:START -->(.*?)<!-- {tag}:END -->", readme, re.S).group(1)
+
+    def without_test_counts(text: str) -> str:
+        return "\n".join(line for line in text.strip().splitlines() if "test cases (" not in line and "测试用例（" not in line)
+
+    assert without_test_counts(block("RESULTS")) == without_test_counts(built["en"])
+    assert without_test_counts(block("RESULTS_ZH")) == without_test_counts(built["zh"])
+    # the fixed "Small differences" limitation quotes the backtest numbers and verdict: they must be the committed ones
+    metrics = json.loads((PROCESSED / "metrics.json").read_text())
+    bullet = next(line for line in readme.splitlines() if line.startswith("- **Small differences.**"))
+    assert render_results.backtest_summary(metrics) in bullet and render_results.backtest_verdict(metrics) in bullet

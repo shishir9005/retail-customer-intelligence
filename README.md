@@ -1,6 +1,6 @@
 # Retail Customer Intelligence + AI Data Analyst
 
-Analytics a retail data team would build, on **1 million real transactions** from a UK online gift shop (UCI Online Retail II, 2009-2011, 43 countries):
+Analytics a retail data team would build, on **1M+ order lines (~40k orders)** from a UK online gift shop (UCI Online Retail II, 2009-2011, 43 country labels: about 40 countries, including Unspecified and European Community):
 a tested cleaning pipeline, SQL analytics in a dashboard, customer segments, a model that predicts who will buy again in the next 90 days,
 product categories from sentence embeddings, and an **AI analyst that turns plain-English questions into SQL** behind a read-only guard.
 
@@ -13,7 +13,7 @@ Built with Python, DuckDB (SQL), pandas, scikit-learn, PyTorch, MiniLM embedding
 <!-- RESULTS:START -->
 ### Data and cleaning
 
-1,067,371 raw rows become **1,003,243** clean sale lines (5,852 identified customers, 39,500 orders, 4,722 products, 43 countries, 2009-12-01 to 2011-12-09) plus 17,914 return lines kept separately. 13.3% of revenue is guest checkouts with no customer ID (kept for revenue, excluded from customer analysis).
+1,067,371 raw rows become **1,003,243** clean sale lines (5,852 identified customers, 39,500 orders, 4,722 products, 43 country labels (about 40 countries; includes Unspecified and European Community), 2009-12-01 to 2011-12-09) plus 17,911 return lines kept separately; 3 refunds of deleted sale lines removed (£245,678.72). 13.3% of revenue is guest checkouts with no customer ID (kept for revenue, excluded from customer analysis).
 
 | Cleaning rule | Rows removed | Rows remaining |
 |---|---:|---:|
@@ -27,32 +27,49 @@ Built with Python, DuckDB (SQL), pandas, scikit-learn, PyTorch, MiniLM embedding
 
 ### Customer segments (RFM + KMeans, k = 4)
 
-| Segment | Customers | % of customers | % of revenue | Days since last order | Orders | Avg spend | Bought again in next 90 days |
+| Segment | Customers | % of customers | % of revenue | Days since last order | Orders | Avg spend | Bought again in next 90 days (segments refitted at 2011-09-09; size of that group) |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Champions | 1,190 | 20% | 74% | 28 | 19.2 | £10,403 | 84% |
-| At risk | 1,446 | 25% | 16% | 229 | 5.0 | £1,889 | 46% |
-| Promising | 1,259 | 22% | 6% | 29 | 3.0 | £838 | 55% |
-| Hibernating | 1,957 | 33% | 4% | 395 | 1.4 | £315 | 20% |
+| Champions | 1,190 | 20% | 74% | 28 | 19.2 | £10,403 | 84% (of 900) |
+| At risk | 1,446 | 25% | 16% | 229 | 5.0 | £1,889 | 46% (of 1,552) |
+| Promising | 1,259 | 22% | 6% | 29 | 3.0 | £838 | 55% (of 733) |
+| Hibernating | 1,957 | 33% | 4% | 395 | 1.4 | £315 | 20% (of 2,068) |
 
-Revenue shares are of identified customers' revenue. The last column is leak-free: the segments were refitted using only orders before 2011-09-09, then customers were followed for 90 days. Refitted at each of 6 dates, Champions always buys again most and Hibernating least; the two middle segments change places between periods.
+Revenue shares are of identified customers' revenue. The last column is leak-free: the segments were refitted using only orders before 2011-09-09, so the group sizes there differ from the customer counts in the second column; those customers were then followed for 90 days. Refitted at each of 6 dates, Champions always buys again most and Hibernating least; the two middle segments change places between periods.
 
-### 90-day repurchase model (test period starting 2011-09-09, 5,253 customers, 43% bought again)
+### 90-day repurchase model, latest quarter (Sep–Dec 2011: test period starting 2011-09-09, 5,253 customers, 43% bought again)
 
 | Model | ROC-AUC (95% CI) | PR-AUC (95% CI) | Top 20% of list contains (share of returners) | Of top 20%, really return |
 |---|---|---|---|---|
 | Recency rule | 0.762 (0.748 to 0.774) | 0.681 (0.660 to 0.703) | 34.7% (33.4% to 35.7%) | 75.2% (72.2% to 77.7%) |
-| Logistic regression | 0.782 (0.770 to 0.796) | 0.754 (0.736 to 0.770) | 38.2% (37.1% to 39.4%) | 82.9% (80.2% to 85.3%) |
-| HistGradientBoosting | 0.795 (0.783 to 0.807) | 0.770 (0.754 to 0.786) | 39.2% (38.0% to 40.5%) | 85.1% (82.7% to 87.3%) |
-| PyTorch MLP | 0.787 (0.775 to 0.800) | 0.765 (0.747 to 0.781) | 38.5% (37.3% to 39.7%) | 83.3% (80.7% to 85.9%) |
+| Recent-orders rule | 0.769 (0.756 to 0.781) | 0.727 (0.709 to 0.744) | 35.7% (34.4% to 36.9%) | 77.5% (74.3% to 79.8%) |
+| Logistic regression (recency + frequency) | 0.779 (0.767 to 0.792) | 0.744 (0.726 to 0.760) | 37.2% (36.0% to 38.5%) | 80.6% (78.3% to 83.2%) |
+| Logistic regression | 0.788 (0.776 to 0.801) | 0.758 (0.740 to 0.774) | 38.5% (37.3% to 39.7%) | 83.3% (80.8% to 85.6%) |
+| HistGradientBoosting | 0.796 (0.784 to 0.808) | 0.772 (0.757 to 0.788) | 39.3% (38.1% to 40.5%) | 85.3% (82.9% to 87.6%) |
+| PyTorch MLP: latest quarter only (Sep–Dec 2011) | 0.794 (0.782 to 0.806) | 0.772 (0.756 to 0.788) | 39.2% (38.1% to 40.6%) | 85.0% (82.8% to 87.3%) |
 
-HistGradientBoosting beats logistic regression by +0.013 ROC-AUC (95% bootstrap interval +0.007 to +0.018): a real but small gain, because most of the signal is simple recency and frequency. Contacting the top 20% by HistGradientBoosting score reaches 39% of all returning customers (a random list reaches 20%), and 85% of those contacted do return, against 43% overall. This run used scikit-learn HistGradientBoosting because LightGBM could not load (macOS needs `brew install libomp`); the code switches to LightGBM automatically when it can.
+**Three-quarter backtest (MLP not included)**, ROC-AUC (each test quarter trains only on earlier cutoffs):
+
+| Model | 2011-03 | 2011-06 | 2011-09 | Mean |
+|---|---:|---:|---:|---:|
+| Recency rule | 0.733 | 0.776 | 0.762 | 0.757 |
+| Recent-orders rule | 0.747 | 0.792 | 0.769 | 0.769 |
+| Logistic regression (recency + frequency) | 0.773 | 0.796 | 0.779 | 0.783 |
+| Logistic regression | 0.773 | 0.809 | 0.788 | 0.790 |
+| HistGradientBoosting | 0.759 | 0.802 | 0.796 | 0.786 |
+| HistGradientBoosting minus logistic regression | -0.014 | -0.006 | +0.008 | -0.004 |
+
+On the backtest, logistic regression averages 0.790 ROC-AUC and HistGradientBoosting 0.786; HistGradientBoosting minus logistic regression is -0.014, -0.006, +0.008 by quarter. The two perform about the same: neither is ahead in every quarter, and the average difference is -0.004 ROC-AUC. Contacting the top 20% by HistGradientBoosting score in the latest quarter reaches 39% of all returning customers (a random list reaches 20%), and 85% of those contacted do return, against 43% overall. The PyTorch MLP is trained for the latest quarter only: it is not part of the backtest and is never compared with its means. This run used scikit-learn HistGradientBoosting because LightGBM could not load (macOS needs `brew install libomp`); the code switches to LightGBM automatically when it can.
 
 ### AI analyst
 
-**28 of 30 questions correct (93%)** with `openai/gpt-oss-120b` (dev set 20/22, held-out set 8/8); safety cases handled 3/3. Execution accuracy: the generated SQL must return the same result as a hand-written gold query.
+**28 of 30 questions correct (93%)** with `openai/gpt-oss-120b` (dev set 20/22, held-out set 8/8). 30 of the 30 returned a result table, and 28 of those matched the hand-written gold query's result: execution accuracy compares results, not SQL text, with numbers within 0.1% or a cent.
 
-Runs so far, oldest first: 19/22, 27/30, 29/30, 28/30. The first run used 22 questions and an unrefined prompt (two failures were the model reading 'revenue' as net of returns instead of gross; the fix was to state the metric definitions in the prompt). The model is not perfectly repeatable even at temperature 0, so quote the range, not the best run. The saved runs are in `evals/history/`.
-The unit-test suite has 225 tests.
+Exploratory set, reported on its own line and not part of the headline: 9/10 correct (10 returned a table). These 10 further questions were written after the 30 above were fixed and were never used to change the prompt.
+
+Safety cases handled 3/3 (refused by the model 3, blocked by the guard 0, other failure 0). Guard cases: 15/15 raw attack queries, run through the guard with no LLM, were refused with the expected message.
+
+Runs so far, oldest first: 19/22, 27/30, 29/30, 28/30, 28/30. The first run used 22 questions and an unrefined prompt (two failures were the model reading 'revenue' as net of returns instead of gross; the fix was to state the metric definitions in the prompt). The last run is scored with the stricter comparison. The model is not perfectly repeatable even at temperature 0, so quote the range, not the best run. The saved runs are in `evals/history/`.
+Test suite: 651 test cases (245 test functions); CI is configured in `.github/workflows/ci.yml`.
 
 <!-- RESULTS:END -->
 
@@ -60,12 +77,12 @@ The unit-test suite has 225 tests.
 
 | # | Module | What it does | Files |
 |---|---|---|---|
-| 1 | **Data pipeline** | Download, clean (7 named rules that each log how many rows they remove), write Parquet, run 10 data-quality checks | `src/rci/pipeline.py`, `quality.py` |
+| 1 | **Data pipeline** | Download, clean (7 named rules that each log how many rows they remove), write Parquet, run 11 data-quality checks | `src/rci/pipeline.py`, `quality.py` |
 | 2 | **SQL analytics dashboard** | Revenue trend, top products and countries, new vs returning customers, monthly cohort retention with a window function. The SQL behind every chart is shown on the page | `sql/*.sql`, `app/Overview.py` |
 | 3 | **Customer segments + A/B planner** | RFM, log + scale, KMeans (k by silhouette within 3-6), named segments checked against real later behaviour. A hand-written power analysis for a win-back email test | `segments.py`, `abtest.py` |
 | 4 | **Repurchase model** | Logistic regression vs gradient boosting vs a PyTorch MLP, time-based split, bootstrap confidence intervals, "top 20% captures X%" | `features.py`, `model.py`, `mlp.py`, `metrics.py` |
 | 5 | **Product categories** | MiniLM embeddings of descriptions, KMeans, categories named by top words, "similar products" by cosine similarity | `products.py` |
-| 6 | **AI data analyst** | Question, then an LLM writes SQL from the schema only, then a six-layer SQL guard, then DuckDB. SQL always shown. 30-question evaluation | `analyst.py`, `sql_guard.py`, `evals/` |
+| 6 | **AI data analyst** | Question, then an LLM writes SQL from the schema only, then a seven-layer SQL guard, then DuckDB. SQL always shown. Evaluation: 30 headline questions, a 10-question exploratory set and 15 guard cases | `analyst.py`, `sql_guard.py`, `evals/` |
 
 ## Architecture
 
@@ -82,7 +99,7 @@ flowchart LR
 ```
 
 Heavy work (reading the Excel file, embeddings, model training, the PyTorch MLP) runs **once, offline**. The deployed app only reads small files
-(about 10 MB in `data/processed`), so it needs no PyTorch or embedding model and fits a free hosting tier.
+(about 10 MB in `data/processed`, and about 0.5 GB of RAM once loaded), so it needs no PyTorch or embedding model and fits a free hosting tier.
 
 ## Key decisions (and why)
 
@@ -95,7 +112,7 @@ Heavy work (reading the Excel file, embeddings, model training, the PyTorch MLP)
 | **Baselines first** | A one-line recency rule and logistic regression set the bar that gradient boosting and the neural net must clear. |
 | **PR-AUC and "top 20% captures X%"** | Marketing contacts a limited list, so the quality of the top of the ranking matters more than accuracy. |
 | **Bootstrap intervals** | Says how much each number could move by luck; the difference between models is paired so it is fair. |
-| **SQL guard in layers** | An LLM can be talked into dangerous SQL. Parse (one SELECT only), table allow-list, function deny-list, row cap, timeout, and a locked connection with file access off. Attack cases are unit-tested. |
+| **SQL guard in layers** | An LLM can be talked into dangerous SQL. Seven layers: parse (one SELECT only), table allow-list, function deny-list (and no recursive WITH), row cap, result-size limits (2 MB per result, 10 KB per value, 1,000 list items), timeout, and a locked connection with file access off. Attack cases are unit-tested. |
 | **Evaluation set with gold SQL** | "It seems to work" is not evidence. Execution accuracy compares results, not SQL text. |
 | **No FastAPI / MLflow / Spark / vector DB** | Not needed here, and everything stays explainable line by line. |
 
@@ -107,7 +124,7 @@ make all        # download + clean data, categories, segments, model (about 4 mi
 make app        # dashboard at http://localhost:8501
 make test       # unit tests
 make eval       # measure the AI analyst (needs GROQ_API_KEY in .env, free key at console.groq.com)
-make results    # refresh the numbers in this README and docs/CV_NUMBERS.md
+make results    # refresh the numbers in this README and write docs/CV_NUMBERS.md (a local, git-ignored file)
 ```
 
 The cleaned Parquet files are committed, so `make app` works straight after cloning, without `make all`.
@@ -132,7 +149,7 @@ sql/            schema.sql, kpis.sql, cohorts.sql, rfm.sql, features.sql   (all 
 src/rci/        pipeline, quality, db, segments, abtest, features, metrics, model, mlp,
                 products, analyst, sql_guard, ratelimit
 app/            Overview.py + pages/ (Segments, Model, Products, Ask the Data)
-evals/          analyst_questions.json (30 questions + 3 safety cases), run_analyst_eval.py, history/
+evals/          analyst_questions.json (40 questions: 30 headline + 10 exploratory; 3 safety cases and 15 guard cases), run_analyst_eval.py, history/
 tests/          cleaning, SQL guard attacks, no-leakage, SQL vs pandas, A/B maths vs statsmodels, segments,
                 metrics, analyst with a fake LLM, page smoke tests
 data/processed/ cleaned Parquet + JSON results (committed, about 10 MB)
@@ -141,10 +158,10 @@ data/processed/ cleaned Parquet + JSON results (committed, about 10 MB)
 
 ## Testing and CI
 
-`pytest` runs on every push in GitHub Actions (Python 3.12, no PyTorch needed). The tests that matter most:
+`pytest` is configured to run on every push in GitHub Actions (`.github/workflows/ci.yml`; Python 3.12, no PyTorch needed); the repository has not run on GitHub yet. The tests that matter most:
 
 - **No leakage** (`tests/test_leakage.py`, on the real data): for all six cutoffs the features are rebuilt from a database with every later row deleted and must match; the SQL features are re-derived independently in pandas; the feature SQL may only read `sales` and `returns`; scalers see training rows only; segments are refitted from earlier data only before being validated; labels whose 90-day window is not fully observed are refused instead of cast to integers. A toy version of the first check lives in `tests/test_no_leakage.py`. Deliberately injecting a leak into each of these places makes the matching test fail.
-- **SQL guard**: 26 attack cases plus 9 legitimate queries that must pass (DROP, COPY, ATTACH, `read_csv`, two statements, unknown tables, comments, quoted function names, slow queries, a locked connection).
+- **SQL guard**: attack queries that must be refused (DROP, COPY, ATTACH, `read_csv`, two statements, unknown tables, a WITH name that hides a system view, huge aggregates, recursive WITH, oversized results, slow queries, a locked connection) and legitimate queries that must still run, with results checked against the plain `.df()` path. The evaluation file also holds raw attack queries that must be refused with the expected message.
 - **SQL vs pandas**: headline numbers, monthly revenue, cohorts and RFM are checked against independent pandas calculations, on a tiny hand-checkable dataset and on the real data.
 - **A/B maths** cross-checked against `statsmodels`.
 - **Analyst flow** with a fake LLM: repair after an error, prompt-injection, file-read attempt, "unanswerable" replies, failed summary.
@@ -152,15 +169,16 @@ data/processed/ cleaned Parquet + JSON results (committed, about 10 MB)
 
 ## Limitations (read before quoting a number)
 
-- **One test period.** The model is evaluated on Sep-Dec 2011, which contains the Christmas peak, so absolute repurchase rates are higher than in a quiet quarter. The ranking of models is the point, not the absolute rate.
-- **Small gains.** Gradient boosting beats logistic regression by about 0.01 ROC-AUC; most of the signal is recency and frequency. The data has no marketing, price or demographic features.
-- **Three preprocessing steps are fitted over all dates, before the split**: the per-product median price used to delete typo prices, the most common description per product, and the product-category clustering. None uses repurchase labels, and their effect is measured, not assumed: the price rule only ever changes guest-checkout rows (which no customer feature reads), and refitting the categories using only products seen before the earliest cutoff changes the test AUC by far less than 0.01 (`tests/test_leakage.py` keeps checking both; the price check needs the raw Excel, so it runs locally but is skipped in CI).
+- **The main table is one quarter.** It is the latest quarter (Sep-Dec 2011), which contains the Christmas peak, so absolute repurchase rates are higher than in a quiet quarter; a three-quarter backtest (test quarters starting 2011-03-09, 2011-06-09 and 2011-09-09, each trained only on earlier data) adds the two earlier quarters. The PyTorch MLP is trained for the latest quarter only (Sep-Dec 2011): it is not part of the backtest and is kept apart from its means. The ranking of models is the point, not the absolute rate.
+- **Small differences.** On the three-quarter backtest, logistic regression averages 0.790 ROC-AUC and HistGradientBoosting 0.786; HistGradientBoosting minus logistic regression is -0.014, -0.006, +0.008 by quarter. The two perform about the same: neither is ahead in every quarter, and the average difference is -0.004 ROC-AUC. Most of the signal is recency and frequency. The data has no marketing, price or demographic features.
+- **Two preprocessing steps are fitted over all dates, before the split**: the per-product median price used to delete typo prices, and the most common description per product. Neither uses repurchase labels, and the price rule's effect is measured, not assumed: it removes 93 lines, 91 of them guest checkouts (which no customer feature reads) and 2 from customer 15098, and a version that uses only earlier prices removes the same 2 (`tests/test_leakage.py` checks that no identified customer's rows depend on later prices; it needs the raw Excel, so it runs locally but is skipped in CI). Product categories (clustered over all products, dates included) are no longer model features: the same file checks that the features are identical with and without the category file.
 - **Segments**: the dashboard table describes customers as of the end of the data (nothing lies in the future of "today"). The "bought again" validation instead refits the segments at each earlier cutoff using only earlier orders. Champions and Hibernating are ordered the same in every period, but At risk and Promising swap places, so read those two as similar opportunities, not a ranking.
-- **Reproducibility**: segmentation is exactly reproducible (rows are read in a fixed order). Model scores reproduce to about 0.001 AUC between runs because multithreaded float sums are not order-stable.
+- **Reproducibility**: segmentation is exactly reproducible (rows are read in a fixed order). The recency rule, both logistic regressions and gradient boosting reproduce to within 0.00001 AUC between runs; the PyTorch MLP moves by up to about 0.0015 between runs (multithreaded float sums are not order-stable).
+- **The SQL guard is a heuristic, not hard isolation.** The function deny-list cannot name every function that builds a huge value, and the DuckDB memory limit and the timeout are safety nets, not hard isolation (the memory limit does not cap every allocation, and the timer cannot interrupt a single long-running function). The question limits (15 per session, 40 per hour across the app) protect the free LLM quota but do not protect against one expensive query. Real isolation would run each analyst query in a separate worker process with an operating-system memory cap; that is outside the scope of this project.
 - **Customers with no history are not scored**, and guest checkouts (no customer ID) cannot be linked to a person.
 - **The dataset has no category column.** Categories come from embeddings of short descriptions; silhouette scores are low (below 0.06), so they are fuzzy groups, not a catalogue.
 - **Cohort retention** treats "first order we can see" as "first order": the Dec 2009 cohort contains every already-active customer.
-- **The AI analyst is not perfectly repeatable.** An LLM varies slightly between runs even at temperature 0; accuracy across runs is listed above. It was evaluated on the same 22 questions used to refine its prompt, plus 8 held-out ones; the held-out set is the less biased number.
+- **The AI analyst is not perfectly repeatable.** An LLM varies slightly between runs even at temperature 0; accuracy across runs is listed above. It was evaluated on the same 22 questions used to refine its prompt, plus 8 held-out ones; the held-out set is the less biased number. A further 10 exploratory questions were written after the 30 were fixed, were never used to change the prompt, and are reported on their own line, never merged into the headline.
 - The `priority` score in "Who to contact" (spend x chance of not returning) is a simple demo heuristic, not a validated business rule.
 
 ## Data and attribution
@@ -193,14 +211,14 @@ data/processed/ cleaned Parquet + JSON results (committed, about 10 MB)
 
 ## 中文简介
 
-**零售客户智能分析 + AI 数据分析师**：基于 UCI Online Retail II 公开数据集（约 100 万条真实英国网店交易记录），实现数据清洗管道、SQL 分析仪表盘（含月度队列留存）、RFM 客户分群与 A/B 测试样本量规划、90 天复购预测模型、基于句向量的商品分类，以及可以用自然语言提问的 AI 数据分析师（LLM 生成 SQL，经过只读 SQL 防护后执行，并有评测集）。
+**零售客户智能分析 + AI 数据分析师**：基于 UCI Online Retail II 公开数据集，包含 100 万+ 条订单明细（约 4 万个订单）的真实英国网店数据，实现数据清洗管道、SQL 分析仪表盘（含月度队列留存）、RFM 客户分群与 A/B 测试样本量规划、90 天复购预测模型、基于句向量的商品分类，以及可以用自然语言提问的 AI 数据分析师（LLM 生成 SQL，经过只读 SQL 防护后执行，并有评测集）。
 
 <!-- RESULTS_ZH:START -->
-- **数据**：UCI Online Retail II，原始 1,067,371 行 → 清洗后 1,003,243 行销售记录，5,852 位可识别客户，43 个国家。
+- **数据**：UCI Online Retail II，原始 1,067,371 行 → 清洗后 1,003,243 行订单明细（约 4 万个订单），5,852 位可识别客户，43 个国家标签（约 40 个国家，含 Unspecified 与 European Community）。
 - **客户分群**：RFM + KMeans，k = 4；Champions 群占 20% 的客户，贡献 74% 的收入。
-- **90 天复购预测**：按时间切分（不随机切分，并有防泄漏测试）。HistGradientBoosting ROC-AUC 0.795，逻辑回归 0.782；按分数排名前 20% 的客户覆盖 39% 的回购客户（随机选只有 20%）。
-- **AI 数据分析师**：用自然语言提问，LLM 生成 SQL，经过只读 SQL 防护后在 DuckDB 执行；在 30 道评测题上执行准确率 93%。
-- **工程化**：225 个自动化测试，GitHub Actions 持续集成。
+- **90 天复购预测**：按时间切分（不随机切分，并有防泄漏测试），并做了三个季度的回测（不含 MLP）：逻辑回归和 HistGradientBoosting 的平均 ROC-AUC 分别为 0.790 和 0.786（两者表现相近，没有谁在每个季度都领先）；在最新季度（2011 年 9–12 月），按分数排名前 20% 的客户覆盖 39% 的回购客户（随机选只有 20%）。PyTorch MLP 仅最新季度训练（ROC-AUC 0.794），不参与回测。
+- **AI 数据分析师**：用自然语言提问，LLM 生成 SQL，经过只读 SQL 防护后在 DuckDB 执行；在 30 道评测题（开发集 + 留出集）上 28 道正确，执行准确率 93%（30 道返回了结果表）；另有 10 道探索性题目单独统计（9/10 正确），不计入上述数字；安全用例 3/3；15/15 个防护用例（直接攻击 SQL，不经过 LLM）被拦截。
+- **工程化**：651 个测试用例（245 个测试函数）；持续集成已配置在 `.github/workflows/ci.yml`。
 
 <!-- RESULTS_ZH:END -->
 
